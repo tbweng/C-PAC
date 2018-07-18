@@ -4,273 +4,9 @@ import nipype.interfaces.fsl as fsl
 import nipype.interfaces.ants as ants
 from nipype.interfaces import afni
 import nuisance_afni_interfaces
+import os
 from CPAC.nuisance import find_offending_time_points, create_temporal_variance_mask
-
-
-def mask_summarize_time_course(functional_file_path, mask_file_path, output_file_path, method="DetrendNormMean",
-                               mask_vol_index=None, mask_label=None, num_pcs=1):
-    """
-    Calculates summary time course for voxels specified by a mask. Methods for summarizing the the time courses include
-    mean and principle component analysis. 
-                               
-    :param functional_file_path: path to nifti file corresponding to the functional data that will be used in the mean 
-            calculation.
-    :param mask_file_path: a nifti file indicating the voxels that should be included in the summary. The mask may 
-            include multiple regions and multiple volumes, which can be specified using the 'mask_vol_index' and 
-            'mask_label' parameters. Default is to calculate a separate summary for each volume of the mask file 
-            and to combine all non-zero regions of each volume into the same summary. The orientation, voxel sizes, and
-            'space' of the mask should match those of the functional data.
-    :param output_file_path: full path and name of the output TSV
-    :param method: the method used for calculating the summary. suitable values are: 
-            'Mean' - the average of voxel indices
-            'NormMean' - z-score normalize voxels prior to calculating summary
-            'DetrendNormMean' - detrend (degree=2) and normalize voxels prior to calculating summary
-            'PCA' - summarize data as top num_pcs from a principle components analysis (i.e. compcor)
-            default is 'DetrendNormMean'
-    :param mask_vol_index: (int) if the mask contains multiple volumes, index of the volume to use. default behavior is 
-            to calculate a separate summary for each volume, which are output to separate columns of the output TSV
-    :param mask_label: (list of tuples) if a mask contains multiple labelled regions, the desired regions can be 
-            selected by providing a list containing a tuple for each volume to be considered, if more than one label is
-            provided, the union of the specified regions will be used 
-    :param num_pcs: If PCA is chosen, the number of the largest PCs that should be returned. Default is the first.
-    :return: name of the TSV file containing the output.
-    """
-
-    import os
-    import nibabel as nb
-    import numpy as np
-
-    # first check inputs to make sure that they are OK
-    if not functional_file_path or \
-            (not functional_file_path.endswith(".nii.gz") and not functional_file_path.endswith(".nii")) \
-            or not os.path.isfile(functional_file_path):
-        raise ValueError("Invalid value for functional_data ({}). Should be the filename to an input nifti "
-                         "file".format(functional_file_path))
-
-    if not mask_file_path or (not mask_file_path.endswith(".nii.gz") and not mask_file_path.endswith(".nii")) or \
-            not os.path.isfile(mask_file_path):
-        raise ValueError("Invalid value for mask ({}). Should be the path to an existing nifti "
-                         "file".format(mask_file_path))
-
-    if not output_file_path:
-        raise ValueError("Invalid value for output_file_path ({}).".format(output_file_path))
-
-    if method and method not in ['Mean', 'NormMean', 'DetrendNormMean', 'PCA']:
-        raise ValueError("Invalid value for method ({}). Should be one of ['Mean', 'NormMean', 'DetrendNormMean',"
-                         " 'PCA']".format(method))
-
-    if mask_vol_index and not (isinstance(mask_vol_index, (int, long)) and mask_vol_index > 0):
-        raise ValueError("Invalid value for mask_vol_index ({}). Should be an integer > 0".format(mask_vol_index))
-
-    if mask_label:
-        if not (isinstance(mask_label, list)):
-            raise ValueError("Invalid type for mask_label ({}). Should be a list.".format(type(mask_label), mask_label))
-
-        for mask_label_index, mask_label_val in enumerate(mask_label):
-            if not isinstance(mask_label_val, (int, long)) and not isinstance(mask_label_val, tuple) \
-                    and not isinstance(mask_label_val, list):
-                raise ValueError("Invalid type ({0}) for mask label #{1}: {2}, should be integer, "
-                                 "list, or tuple".format(type(mask_label_val), mask_label_index, mask_label_val))
-
-    if num_pcs and not (isinstance(num_pcs, (int, long)) and num_pcs > 0):
-        raise ValueError("Invalid value for num_pcs ({0}). Should be an integer > 0".format(num_pcs))
-
-    functional_image = nb.load(functional_file_path)
-
-    if len(functional_image.shape) < 4 or functional_image.shape[3] == 1:
-        raise ValueError("Expecting 4D file nifti file, but {0} has shape {1}.".format(functional_file_path,
-                                                                                       functional_image.shape))
-
-    functional_image_data = (functional_image.get_data()).reshape((np.prod(functional_image.shape[0:3]),
-                                                                   functional_image.shape[3]))
-
-    time_course_length = functional_image.shape[3]
-
-    print("Mask image data comes from {0}".format(mask_file_path))
-
-    # read in the mask data
-    mask_image = nb.load(mask_file_path)
-
-    if mask_image.shape[0:3] != functional_image.shape[0:3] or \
-            not np.allclose(mask_image.affine, functional_image.affine):
-        raise ValueError("Mask ({0}) and functional image ({1}) must be in the same space. Please check the header "
-                         "and verify that the shape and transform are the same.".format(mask_file_path,
-                                                                                        functional_file_path))
-
-    if len(mask_image.shape) > 3:
-
-        mask_image_data = mask_image.get_data().reshape((np.prod(mask_image.shape[0:3]), mask_image.shape[3]))
-
-        if mask_vol_index and mask_vol_index >= mask_image.shape[3]:
-            raise ValueError("Requested mask volume {0}, from file that only contains "
-                             "volumes 0 ... {1}".format(mask_vol_index, mask_vol_index-1))
-
-        mask_image_data = mask_image_data[:, [mask_vol_index]]
-
-    else:
-
-        mask_image_data = mask_image.get_data().reshape((np.prod(mask_image.shape[0:3]), 1))
-
-        if mask_vol_index and mask_vol_index != 0:
-            print("Requested mask volume {0}, from file that only contains a single volume (0), "
-                  "ignoring.".format(mask_vol_index))
-
-    if mask_label and len(mask_label) > 1 and len(mask_label) != mask_image_data.shape[1]:
-        raise ValueError("Length of mask labels {0} should either match the number of mask volumes {1}, "
-                         "or should be 1".format(len(mask_label), mask_image_data.shape[1]))
-
-    number_of_mask_volumes = mask_image_data.shape[1]
-
-    # the calculated roi summaries will be held in a list of lists
-    time_course_summaries = []
-
-    for mask_index in range(0, mask_image_data.shape[1]):
-
-        # extract the time series for the intended voxels
-        if not mask_label:
-            voxel_indices = np.where(mask_image_data[:, mask_index] > 0)[0].tolist()
-
-            print("{0} nonzero positive voxels in mask {1}".format(len(voxel_indices), mask_file_path))
-
-        else:
-            # if we only have one set of mask labels, but many mask volumes, we apply the same labels to each volume,
-            # otherwise we use a different set of mask labels for each volume
-            mask_label_this_mask_vol = []
-            if len(mask_label) == 1:
-                mask_label_this_mask_vol = mask_label[0]
-            else:
-                mask_label_this_mask_vol = mask_label[mask_index]
-
-            if isinstance(mask_label_this_mask_vol, int):
-                mask_label_this_mask_vol = [mask_label_this_mask_vol]
-
-            # calculate the union between the different masks
-            voxel_indices = []
-            for mask_label_val in mask_label_this_mask_vol:
-                voxel_indices += np.where(mask_image_data[:, mask_index] == mask_label_val)[0].tolist()
-
-            print("{0} voxels in mask {1} with labels {2}".format(len(voxel_indices), mask_file_path,
-                                                                  mask_label_this_mask_vol))
-
-        # make sure that the voxel indices are unique
-        voxel_indices = np.unique(voxel_indices)
-
-        if len(voxel_indices) == 0:
-            raise ValueError("Time series extraction failed, no voxels in mask {0} match label(s) {1}".format(
-                mask_file_path, mask_label))
-
-        time_courses = functional_image_data[voxel_indices, :]
-
-        # exclude time courses with zero variance to avoid wasting our time on meaningless data, and to avoid
-        # NaNs
-        time_courses = time_courses[np.isclose(time_courses.var(1), 0.0) == False, :]
-
-        if time_courses.shape[0] == 0:
-            raise ValueError("None of the {0} in-mask voxels have non-zero variance time"
-                             " courses.".format(len(voxel_indices)))
-
-        print("{0} voxels survived variance filter".format(time_courses.shape[0]))
-
-        # Make sure we have a 2D array, even if it only contains a single time course
-        if len(time_courses.shape) == 1:
-            time_courses = time_courses.reshape((time_courses.shape[0], 1))
-
-        if method in ["PCA"]:
-
-            # compcor begins with linearly detrending the columns of the matrix
-            def linear_detrend_columns(image_array_2d):
-                """
-                perform quadratic detrending on each row of a 2D numpy array representing a functional image
-
-                :param image_array_2d: 2D numpy array containing functional data to be processed
-                :return: 2D numpy array of residuals
-                """
-                column_len = image_array_2d.shape[0]
-                polynomial_design_matrix = np.array([range(0, column_len), [1] * column_len])
-                polynomial_coefficients = np.polyfit(range(0, column_len), image_array_2d, deg=1)
-                return image_array_2d - polynomial_coefficients.transpose().dot(polynomial_design_matrix).transpose()
-
-            time_courses = linear_detrend_columns(time_courses)
-
-        # normalize data as requested
-        if method in ["PCA", "DetrendNormMean"]:
-
-            def quadratic_detrend_rows(image_array_2d):
-                """
-                perform quadratic detrending on each row of a 2D numpy array representing a functional image
-                
-                :param image_array_2d: 2D numpy array containing functional data to be processed
-                :return: 2D numpy array of residuals
-                """
-
-                print("2D image shape {0} {1}".format(image_array_2d.shape, len(image_array_2d.shape)))
-
-                row_len = image_array_2d.shape[1]
-                polynomial_design_matrix = np.array([[x * x for x in range(0, row_len)], range(0, row_len),
-                                                     [1]*row_len])
-                polynomial_coefficients = np.polyfit(range(0, row_len), image_array_2d.transpose(), deg=2)
-                return image_array_2d - polynomial_coefficients.transpose().dot(polynomial_design_matrix)
-
-            time_courses = quadratic_detrend_rows(time_courses)
-
-        if method in ["PCA", "DetrendNormMean", "NormMean"]:
-
-            time_courses = time_courses - np.tile(time_courses.mean(1).reshape(time_courses.shape[0], 1),
-                                                  (1, time_courses.shape[1]))
-            time_courses = time_courses / np.tile(time_courses.std(1).reshape(time_courses.shape[0], 1),
-                                                  (1, time_courses.shape[1]))
-
-        # now summarise
-        if method in ["DetrendNormMean", "NormMean", "Mean"]:
-
-            time_course_summaries.append(time_courses.mean(0))
-
-        elif method in ["PCA"]:
-
-            [u, s, v] = np.linalg.svd(time_courses, full_matrices=False)
-            time_course_summaries.append(v[0:num_pcs, :])
-
-    if len(time_course_summaries) != number_of_mask_volumes:
-        raise ValueError("Expected {0} summaries, one for mask volume, "
-                         "but received {1}".format(number_of_mask_volumes, len(time_course_summaries)))
-
-    output_file_path = os.path.join(os.getcwd(), output_file_path)
-    with open(output_file_path, "w") as ofd:
-
-        for time_point in range(0, time_course_length):
-
-            row_values = []
-
-            if time_point == 0:
-
-                # write out the header information
-                ofd.write("# CPAC version {0}\n".format("1.010"))
-                ofd.write("# Time courses extracted from {0} using mask {1} and "
-                          "method {2}\n".format(functional_file_path, mask_file_path, method))
-
-                for time_course_summary_index, time_course_summary in enumerate(time_course_summaries):
-                    if method in ["PCA"]:
-                        if time_course_summary.shape[0] != num_pcs:
-                            raise ValueError("Time course summary {0} expected {1} pcs, but received {2}".format(
-                                time_course_summary_index, num_pcs, time_course_summary.shape[0]))
-                        row_values += ["mask#{0}_{1}#{2}".format(time_course_summary_index, method, pc)
-                                       for pc in range(0, num_pcs)]
-                    else:
-                        row_values += ["mask#{0}_{1}".format(time_course_summary_index, method)]
-
-                ofd.write("#"+"\t".join(row_values)+"\n")
-
-                row_values = []
-
-            for time_course_summary_index, time_course_summary in enumerate(time_course_summaries):
-                if method in ["PCA"]:
-                    row_values += ["{0}".format(time_course_summary[pc, time_point]) for pc in range(0, num_pcs)]
-                else:
-                    row_values += ["{0}".format(time_course_summary[time_point])]
-
-            ofd.write("\t".join(row_values) + "\n")
-
-    return output_file_path
+import CPAC.utils as utils
 
 
 def gather_nuisance(functional_file_path, selector, output_file_path, grey_matter_summary_file_path=None,
@@ -550,72 +286,19 @@ def gather_nuisance(functional_file_path, selector, output_file_path, grey_matte
     return output_file_path
 
 
-def create_nuisance_workflow(use_ants, selector, name='nuisance'):
+def create_nuisance_workflow(pipeline_resource_pool, nuisance_configuration_selector, functional_specifier, use_ants,
+                             name='nuisance'):
     """
     Workflow for the removal of various signals considered to be noise from resting state
     fMRI data.  The residual signals for linear regression denoising is performed in a single
     model.  Therefore the residual time-series will be orthogonal to all signals.
 
     Parameters
-    ---------- 
+    ----------
+    :param pipeline_resource_pool: dictionary of pipeline resources and their source nodes
+    :param nuisance_configuration_selector: dictionary describing nuisance regression to be performed
+    :param functional_specifier: key corresponding to functional data that should be used
     :param use_ants: flag indicating whether FNIRT or ANTS is used
-    :param selector: Dictionary containing configuration parameters for nuisance regression
-            selector = {'Anaticor' : None | {radius = <radius in mm>},
-                        'aCompCor' : None | {num_pcs = <number of components to retain>,
-                                            tissues = 'WM' | 'CSF' | 'WM+CSF',
-                                            include_delayed = True | False,
-                                            include_squared = True | False,
-                                            include_delayed_squared = True | False},
-                        'tCompCor' : None | {num_pcs = <number of components to retain>,
-                                            threshold = <floating point number = cutoff as raw variance value,
-                                                         floating point number followed by SD (ex. 1.5SD) = mean + a
-                                                             multiple of the SD,
-                                                         floating point number followed by PCT (ex. 2PCT) = percentile
-                                                             from the top (ex is top 2%),
-                                            by_slice = boolean, whether or not the threshold criterion should be applied
-                                                       by slice or across the entire volume, makes most sense for SD or
-                                                       PCT
-                                            tissues = 'WM' | 'CSF' | 'WM+CSF',
-                                            include_delayed = True | False,
-                                            include_squared = True | False,
-                                            include_delayed_squared = True | False},
-                        'WhiteMatter' : None | {summary_method = 'PCA', 'Mean', 'NormMean' or 'DetrendNormMean',
-                                       num_pcs = <number of components to retain>,
-                                       include_delayed = True | False, 
-                                       include_squared = True | False,
-                                       include_delayed_squared = True | False},
-                        'Ventricles' : None | {summary_method = 'PCA', 'Mean', 'NormMean' or 'DetrendNormMean',
-                                       num_pcs = <number of components to retain>,
-                                       include_delayed = True | False, 
-                                       include_squared = True | False,
-                                       include_delayed_squared = True | False},
-                        'GreyMatter' : None | {summary_method = 'PCA', 'Mean', 'NormMean' or 'DetrendNormMean',
-                                       num_pcs = <number of components to retain>,
-                                       include_delayed = True | False, 
-                                       include_squared = True | False,
-                                       include_delayed_squared = True | False},
-                        'GlobalSignal' : None | {summary_method = 'PCA', 'Mean', 'NormMean' or 'DetrendNormMean',
-                                           num_pcs = <number of components to retain>,
-                                           include_delayed = True | False, 
-                                           include_squared = True | False,
-                                           include_delayed_squared = True | False},
-                        'Motion' : None | {include_delayed = True | False, 
-                                           include_squared = True | False,
-                                           include_delayed_squared = True | False},
-                        'Censor' : None | { thresh_metric = 'RMSD','DVARS', or 'RMSD+DVARS',
-                                            threshold = <threshold to be applied to metric, if using 
-                                              RMSD+DVARS, this should be a tuple (RMSD thresh, DVARS thresh)>,
-                                            number_of_previous_trs_to_remove = True | False,
-                                            number_of_subsequent_trs_to_remove = True | False,
-                                            method = 'Kill', 'Zero', 'Interpolate', 'SpikeRegression'},
-                        'PolyOrt' : None | { degree = <polynomial degree up to which will be removed, e.g. 2 means 
-                                                       constant + linear + quadratic, practically that is probably,
-                                                       the most that will be need esp. if band pass filtering>},
-                        'Bandpass' : None | { bottom_frequency = <frequency in hertz of the highpass part of the pass 
-                                                                  band, frequencies below this will be removed>,
-                                              top_frequency = <frequency in hertz of the lowpass part of the pass 
-                                                               band, frequencies above this will be removed>},
-                        }
     :param name: Name of the workflow, defaults to 'nuisance'
     :return: nuisance : nipype.pipeline.engine.Workflow
         Nuisance workflow.
@@ -660,7 +343,80 @@ def create_nuisance_workflow(use_ants, selector, name='nuisance'):
             Framewise displacement calculated from the motion parameters.
         inputspec.dvars_file_path : string (text file)
             DVARS calculated from the functional data.
-        inputspec.selector : dictionary
+        inputspec.selector : Dictionary containing configuration parameters for nuisance regression
+            selector = {'aCompCor' : None | {num_pcs = <number of components to retain>,
+                                            tissue = 'WM' | 'CSF' | 'WM+CSF',
+                                            extraction_resolution = None | floating point value indicating isotropic
+                                                resolution (ex. 2 for 2mm x 2mm x 2mm that data should be extracted at,
+                                                the corresponding tissue mask will be resampled to this resolution. The
+                                                functional data will also be resampled to this resolution, and the
+                                                extraction will occur at this new resolution. The goal is to avoid
+                                                contamination from undesired tissue components when extracting nuisance
+                                                regressors,
+                                             erode_mask = True | False, whether or not the mask should be eroded to
+                                                further avoid a mask overlapping with a different tissue class,
+                                            include_delayed = True | False,
+                                            include_squared = True | False,
+                                            include_delayed_squared = True | False},
+                        'tCompCor' : None | {num_pcs = <number of components to retain>,
+                                            threshold = <floating point number = cutoff as raw variance value,
+                                                         floating point number followed by SD (ex. 1.5SD) = mean + a
+                                                             multiple of the SD,
+                                                         floating point number followed by PCT (ex. 2PCT) = percentile
+                                                             from the top (ex is top 2%),
+                                            by_slice = boolean, whether or not the threshold criterion should be applied
+                                                       by slice or across the entire volume, makes most sense for SD or
+                                                       PCT,
+                                            include_delayed = True | False,
+                                            include_squared = True | False,
+                                            include_delayed_squared = True | False},
+                        'WhiteMatter' : None | {summary_method = 'Anaticor', 'PCA', 'Mean', 'NormMean' or
+                                           'DetrendNormMean',
+                                       num_pcs = <number of components to retain>,
+                                       anaticor_radius = <radius in mm>,
+                                       extraction_resolution = None | floating point value (same as for aCompCor),
+                                       erode_mask = True | False (same as for aCompCor),
+                                       include_delayed = True | False,
+                                       include_squared = True | False,
+                                       include_delayed_squared = True | False},
+                        'Ventricles' : None | {summary_method = 'PCA', 'Mean', 'NormMean' or 'DetrendNormMean',
+                                       num_pcs = <number of components to retain>,
+                                       extraction_resolution = None | floating point value (same as for aCompCor),
+                                       erode_mask = True | False (same as for aCompCor),
+                                       include_delayed = True | False,
+                                       include_squared = True | False,
+                                       include_delayed_squared = True | False},
+                        'GreyMatter' : None | {summary_method = 'PCA', 'Mean', 'NormMean' or 'DetrendNormMean',
+                                       num_pcs = <number of components to retain>,
+                                       extraction_resolution = None | floating point value (same as for aCompCor),
+                                       erode_mask = True | False (same as for aCompCor),
+                                       include_delayed = True | False,
+                                       include_squared = True | False,
+                                       include_delayed_squared = True | False},
+                        'GlobalSignal' : None | {summary_method = 'PCA', 'Mean', 'NormMean' or 'DetrendNormMean',
+                                           num_pcs = <number of components to retain>,
+                                           extraction_resolution = None | floating point value (same as for aCompCor),
+                                           erode_mask = True | False (same as for aCompCor),
+                                           include_delayed = True | False,
+                                           include_squared = True | False,
+                                           include_delayed_squared = True | False},
+                        'Motion' : None | {include_delayed = True | False,
+                                           include_squared = True | False,
+                                           include_delayed_squared = True | False},
+                        'Censor' : None | { thresh_metric = 'RMSD','DVARS', or 'RMSD+DVARS',
+                                            threshold = <threshold to be applied to metric, if using
+                                              RMSD+DVARS, this should be a tuple (RMSD thresh, DVARS thresh)>,
+                                            number_of_previous_trs_to_remove = True | False,
+                                            number_of_subsequent_trs_to_remove = True | False,
+                                            method = 'Kill', 'Zero', 'Interpolate', 'SpikeRegression'},
+                        'PolyOrt' : None | { degree = <polynomial degree up to which will be removed, e.g. 2 means
+                                                       constant + linear + quadratic, practically that is probably,
+                                                       the most that will be need esp. if band pass filtering>},
+                        'Bandpass' : None | { bottom_frequency = <frequency in hertz of the highpass part of the pass
+                                                                  band, frequencies below this will be removed>,
+                                              top_frequency = <frequency in hertz of the lowpass part of the pass
+                                                               band, frequencies above this will be removed>}
+                        }
 
     Workflow Outputs::
 
@@ -712,27 +468,244 @@ def create_nuisance_workflow(use_ants, selector, name='nuisance'):
                                                         'regressors_file_path']),
                          name='outputspec')
 
-    # Resample the white matter mask to 2mm space in subject space
-    wm_anat_to_2mm = pe.Node(interface=fsl.FLIRT(), name='wm_anat_to_2mm_flirt_applyxfm')
-    wm_anat_to_2mm.inputs.args = '-applyisoxfm 2'
-    wm_anat_to_2mm.inputs.interp = 'nearestneighbour'
+    # build regressors and combine them into a single file
+    build_nuisance_regressors = pe.Node(util.Function(input_names=['functional_file_path',
+                                                                   'selector',
+                                                                   'output_file_path',
+                                                                   'grey_matter_summary_file_path',
+                                                                   'white_matter_summary_file_path',
+                                                                   'csf_summary_file_path',
+                                                                   'acompcorr_file_path',
+                                                                   'tcompcorr_file_path',
+                                                                   'global_summary_file_path',
+                                                                   'motion_parameters_file_path',
+                                                                   'framewise_displacement_file_path',
+                                                                   'dvars_file_path',
+                                                                   'censor_file_path'],
+                                                      output_names=['out_file'],
+                                                      function=gather_nuisance),
+                                        name="build_nuisance_regressors")
 
-    nuisance.connect(inputspec, 'wm_mask_file_path', wm_anat_to_2mm, 'in_file')
-    nuisance.connect(inputspec, 'wm_mask_file_path', wm_anat_to_2mm, 'reference')
+    build_nuisance_regressors.inputs.selector = nuisance_configuration_selector
+    build_nuisance_regressors.inputs.output_file_path = "nuisance_regressors.1D"
 
-    # erode the white matter mask by 1 voxel to avoid overlap with grey matter
-    wm_anat_2mm_erode = pe.Node(interface=afni.Calc(), name='wm_anat_2mm_erode')
-    wm_anat_2mm_erode.inputs.args = '-b a+i -c a-i -d a+j -e a-j -f a+k -g a-k'
-    wm_anat_2mm_erode.inputs.expr = 'a*(1-amongst(0,b,c,d,e,f,g))'
-    wm_anat_2mm_erode.inputs.outputtype = 'NIFTI_GZ'
-    wm_anat_2mm_erode.inputs.out_file = 'wm_mask_2mm_eroded.nii.gz'
+    nuisance.connect(inputspec, 'functional_file_path', build_nuisance_regressors, 'functional_file_path')
 
-    nuisance.connect(wm_anat_to_2mm, 'out_file', wm_anat_2mm_erode, 'in_file_a')
+    # regressor map to simplify construction of the needed regressors
+    regressor_map = {'aCompCor': ('acompcorr_file_path', []),
+                     'tCompCor': ('tcompcorr_file_path', []),
+                     'GlobalSignal': ('global_summary_file_path', []),
+                     'GreyMatter': ('grey_matter_summary_file_path', []),
+                     'WhiteMatter': ('white_matter_summary_file_path', []),
+                     'Ventricles': ('csf_summary_file_path', []),
+                     'DVARS': ('dvars_file_path', (inputspec, 'dvars_file_path')),
+                     'FD': ('framewise_displacement_file_path', (inputspec, 'framewise_displacement_file_path')),
+                     'Motion': ('motion_parameters_file_path', (inputspec, 'motion_parameters_file_path'))}
 
-    # Resample grey matter masks from 1mm to 2mm, but remaining in subject space
-    gm_anat_to_2mm = pe.Node(interface=fsl.FLIRT(), name='gm_anat_to_2mm_flirt_applyxfm')
-    gm_anat_to_2mm.inputs.args = '-applyisoxfm 2'
-    gm_anat_to_2mm.inputs.interp = 'nearestneighbour'
+    for regressor_type, regressor_specification in regressor_map.iteritems():
+
+        # go ahead and set summary_method for tCompCor and aCompCor so make the logic easier
+        if regressor_type in ['tCompCor', 'aCompCor']:
+            nuisance_configuration_selector[regressor_type]['summary_method'] = 'PCA'
+
+        if regressor_type in nuisance_configuration_selector and nuisance_configuration_selector[regressor_type]:
+            if not isinstance(regressor_specification, tuple):
+                raise ValueError("Regressor specification should be a tuple")
+
+            if len(regressor_specification) != 2 or not regressor_specification[1]:
+
+                # we don't have the regressor, look for it in the resource pool, build a corresponding key,
+                # this is seperated in to a mask key and an extraction key, which when concatenated provide
+                # the resource key for the regressor
+                regressor_descriptor = {'tissue': regressor_type}
+
+                if regressor_type is 'aCompCor':
+                    if 'tissue' in nuisance_configuration_selector[regressor_type] and \
+                            nuisance_configuration_selector[regressor_type]['tissue']:
+                        regressor_descriptor = {'tissue': nuisance_configuration_selector[regressor_type]['tissue']}
+                    else:
+                        raise ValueError("Tissue type required for aCompCor, but none specified")
+
+                if regressor_type is 'tCompCor':
+                    if 'threshold' in nuisance_configuration_selector[regressor_type] and \
+                            nuisance_configuration_selector[regressor_type]['threshold']:
+                        if 'by_slice' in nuisance_configuration_selector[regressor_type] and \
+                                nuisance_configuration_selector[regressor_type]['by_slice']:
+                            regressor_descriptor = {'tissue': 'functional-variance-{0}-bySlice'.format(
+                                nuisance_configuration_selector[regressor_type]['threshold'])}
+                        else:
+                            regressor_descriptor = {'tissue': 'functional-variance-{0}'.format(
+                                nuisance_configuration_selector[regressor_type]['threshold'])}
+                    else:
+                        raise ValueError("Threshold required for tCompCor, but none specified.")
+
+                if 'extraction_resolution' in nuisance_configuration_selector[regressor_type] and \
+                        nuisance_configuration_selector[regressor_type]['extraction_resolution']:
+                    regressor_descriptor['resolution'] = \
+                        nuisance_configuration_selector[regressor_type]['extraction_resolution']
+
+                if 'erode_mask' in nuisance_configuration_selector[regressor_type]:
+                    regressor_descriptor['erosion'] = nuisance_configuration_selector[regressor_type]['erode_mask']
+
+                # now combine with extraction information to get the regressor file
+                if 'summary_method' in nuisance_configuration_selector[regressor_type]and \
+                        nuisance_configuration_selector[regressor_type]['summary_method']:
+                    regressor_descriptor['extraction'] = \
+                        nuisance_configuration_selector[regressor_type]['summary_method']
+
+                    if nuisance_configuration_selector[regressor_type]['summary_method'] is 'PCA' and 'num_pcs' in \
+                            nuisance_configuration_selector[regressor_type] and \
+                            nuisance_configuration_selector[regressor_type]['num_pcs']:
+                        regressor_descriptor['extraction'] += \
+                            '_{0}pcs'.format(nuisance_configuration_selector[regressor_type]['num_pcs'])
+                    else:
+                        raise ValueError("Summary method PCA requires num_pcs, but received none.")
+                else:
+                    raise ValueError("Summary method required for {0}, but none specified".format(regressor_type))
+
+                regressor_file_resource_key = "_".join([regressor_descriptor[key] for key in ['tissue', 'resolution',
+                                                                                              'erosion', 'extraction']
+                                                        if key in regressor_descriptor])
+
+                if not (regressor_file_resource_key in pipeline_resource_pool and
+                        pipeline_resource_pool[regressor_file_resource_key]):
+
+                    mask_resample_erode_file_resource_key = "_".join([regressor_descriptor[key]
+                                                                      for key in ['tissue', 'resolution', 'erosion']
+                                                                      if key in regressor_descriptor])
+
+                    if "erosion" in regressor_descriptor and regressor_descriptor["erosion"] and \
+                            not (mask_resample_erode_file_resource_key in pipeline_resource_pool and
+                                 pipeline_resource_pool[mask_resample_erode_file_resource_key]):
+
+                        mask_resample_file_resource_key = "_".join([regressor_descriptor[key]
+                                                                    for key in ['tissue', 'resolution']
+                                                                    if key in regressor_descriptor])
+
+                        if not (mask_resample_file_resource_key in pipeline_resource_pool and
+                                pipeline_resource_pool[mask_resample_file_resource_key]):
+
+                            mask_file_resource_key = regressor_descriptor['tissue']
+
+                            if not (mask_file_resource_key in pipeline_resource_pool and
+                                    pipeline_resource_pool[mask_file_resource_key]):
+
+                                if 'functional-variance' in mask_file_resource_key:
+                                    pipeline_resource_pool[mask_file_resource_key] = \
+                                        insert_create_variance_mask_node(nuisance, pipeline_resource_pool['functional'],
+                                                                         nuisance_configuration_selector)
+
+                                else:
+                                    raise ValueError("Nuisance regression requires a {0} mask, but not found in the "
+                                                     "pipeline resource pool. Perhaps there is an error in the "
+                                                     "configuration?".format(mask_file_resource_key))
+
+                            anatomical_to_epi_transform_key = "{0}_to_anat_linear_xform.mat".format(
+                                functional_specifier)
+
+                            if not (anatomical_to_epi_transform_key in pipeline_resource_pool and
+                                    pipeline_resource_pool[anatomical_to_epi_transform_key]):
+                                raise ValueError("Resampling mask {0} requires transform {1}, but not found".format(
+                                    mask_file_resource_key, anatomical_to_epi_transform_key))
+
+                            pipeline_resource_pool[mask_resample_file_resource_key] = \
+                                utils.mask_nodes.insert_node_apply_flirt_linear_transform(
+                                    nuisance, pipeline_resource_pool[mask_file_resource_key],
+                                    pipeline_resource_pool[functional_specifier],
+                                    pipeline_resource_pool[anatomical_to_epi_transform_key],
+                                    regressor_descriptor["resolution"], mask_resample_file_resource_key)
+
+                        if "censor" in regressor_descriptor:
+                            pipeline_resource_pool[mask_resample_erode_file_resource_key] = \
+                                utils.mask_nodes.insert_erode_mask_node(nuisance,
+                                                                        pipeline_resource_pool[
+                                                                            mask_resample_file_resource_key],
+                                                                        mask_resample_file_resource_key)
+
+                    functional_file_at_resolution_key = functional_specifier + "_res-{0}".format(
+                        regressor_descriptor["resolution"])
+
+                    if not (functional_file_at_resolution_key in pipeline_resource_pool and
+                            pipeline_resource_pool[functional_file_at_resolution_key]):
+
+                        if not (functional_specifier in pipeline_resource_pool and
+                                pipeline_resource_pool[functional_specifier]):
+                            raise ValueError(
+                                "Unable to find functional file corresponding to {0} in resource pool.".format(
+                                    functional_specifier))
+
+                        # also find the epi - anat xform that will be needed to copy functional into mask space
+                        epi_anatomical_transform_key = "func_to_anat_linear_xfm"
+
+                    if nuisance_configuration_selector[regressor_type] is not "anaticor":
+                        pipeline_resource_pool[regressor_file_resource_key] = \
+                            insert_mask_summarize_time_course_node(
+                                nuisance,
+                                pipeline_resource_pool[functional_file_key],
+                                pipeline_resource_pool[mask_resample_erode_file_resource_key],
+                                mask_vol_index=0,  # we always use a 3D mask
+                                mask_label=1,  # we explicitly construct mask so that it is binary
+                                summarization_method=nuisance_configuration_selector["method"],
+                                num_pcs=nuisance_configuration_selector[regressor_type]["num_pcs"],
+                                node_name=regressor_type)
+
+                    sys.exit()
+
+
+                    # couldn't find regressor in resource pool, so lets look for the mask
+                    if mask_file_resource_key in pipeline_resource_pool and \
+                            pipeline_resource_pool[mask_file_resource_key]:
+                        mask_source = pipeline_resource_pool[mask_file_resource_key]
+                    else:
+                        # couldn't find exact mask, so lets check for a less processed mask that meets our needs
+                        if 1:
+
+                            regressor_specification[1] = pipeline_resource_pool[regressor_file_resource_key]
+
+    if tissue_regressor[0] in tissue_regressor_nodes:
+            gather_nuisance_input_map[tissue_regressor[0]] = (tissue_regressor[1],
+                                                              tissue_regressor_nodes[tissue_regressor[0]],
+                                                              'regressor_file_path')
+
+    if 'Censor' in selector and selector['Censor']:
+        gather_nuisance_input_map['Censor'] = ('censor_file_path', find_censors, 'out_file')
+
+    build_nuisance_regressors = None
+
+    # first check to see if we have any regressors, if so we need to combine them into a single file
+    build_nuisance_regressors_flag = False
+    for regressor_key in gather_nuisance_input_map:
+        if regressor_key in selector and selector[regressor_key]:
+            build_nuisance_regressors_flag = True
+            break
+
+    if build_nuisance_regressors_flag is True:
+
+
+
+        for regressor_key, regressor_val in gather_nuisance_input_map.iteritems():
+
+            if regressor_key in selector and selector[regressor_key]:
+
+                if regressor_key is 'Censor' and selector[regressor_key]['censor_method'] is not 'SpikeRegression':
+                    continue
+
+                try:
+                    nuisance.connect(regressor_val[1], regressor_val[2], build_nuisance_regressors, regressor_val[0])
+                except:
+                    print("Error trying to connect {0} to build_nuisance_regressors".format(regressor_key))
+                    raise
+
+
+    # for regressor_type in [""]
+    if ('WhiteMatter' in nuisance_configuration_selector and nuisance_configuration_selector['WhiteMatter']):
+
+        if not ('gm_wm_ventricle_mask' in pipeline_resource_pool and pipeline_resource_pool['gm_wm_ventricle_mask']):
+            if not ('ventricle_mask' in pipeline_resource_pool and pipeline_resource_pool['ventricle_mask']):
+                # Resample grey matter masks from 1mm to 2mm, but remaining in subject space
+                gm_anat_to_2mm = pe.Node(interface=fsl.FLIRT(), name='gm_anat_to_2mm_flirt_applyxfm')
+                gm_anat_to_2mm.inputs.args = '-applyisoxfm 2'
+                gm_anat_to_2mm.inputs.interp = 'nearestneighbour'
 
     nuisance.connect(inputspec, 'gm_mask_file_path', gm_anat_to_2mm, 'in_file')
     nuisance.connect(inputspec, 'gm_mask_file_path', gm_anat_to_2mm, 'reference')
@@ -910,49 +883,7 @@ def create_nuisance_workflow(use_ants, selector, name='nuisance'):
             else:
                 tissue_mask_resource_pool_key = tissue_regressor
 
-            tissue_regressor_nodes[tissue_regressor] = pe.Node(util.Function(input_names=['functional_file_path',
-                                                                                          'mask_file_path',
-                                                                                          'output_file_path',
-                                                                                          'summary_method',
-                                                                                          'mask_vol_index',
-                                                                                          'mask_label',
-                                                                                          'num_pcs'],
-                                                                             output_names=['regressor_file_path'],
-                                                                             function=mask_summarize_time_course),
-                                                               name='summarise_regressor_{}'.format(tissue_regressor))
 
-            tissue_regressor_nodes[tissue_regressor].interface.estimated_memory_gb = 1.0
-
-            # probably seems redundant to the user to specify CompCor and PCA summarization, since it is redundant
-            # lets just set here to keep the logic the same as for other tissue without a bunch of branching
-            if tissue_regressor in ['aCompCor', 'tCompCor']:
-                selector[tissue_regressor]['summary_method'] = "PCA"
-
-            if 'summary_method' not in selector[tissue_regressor]:
-                raise ValueError("Missing method for summarizing {0} tissue voxels into a nuisance"
-                                 " regressor".format(tissue_regressor))
-            tissue_regressor_nodes[tissue_regressor].inputs.method = selector[tissue_regressor]['summary_method']
-
-            if selector[tissue_regressor]['summary_method'] is 'PCA':
-                if 'num_pcs' not in selector[tissue_regressor]:
-                    raise ValueError("Summarization method for {0} is PCA, but num_pcs is not specified in "
-                                     "selector".format(tissue_regressor))
-                tissue_regressor_nodes[tissue_regressor].inputs.num_pcs = selector[tissue_regressor]['num_pcs']
-
-            tissue_regressor_nodes[tissue_regressor].inputs.mask_vol_index = 0
-            tissue_regressor_nodes[tissue_regressor].inputs.mask_label = \
-                [tissue_mask_resource_pool[tissue_mask_resource_pool_key]['mask_label']]
-
-            tissue_regressor_nodes[tissue_regressor].inputs.output_file_path = \
-                '{}_regressor.tsv'.format(tissue_regressor)
-
-            nuisance.connect(tissue_mask_resource_pool[tissue_mask_resource_pool_key]['functional_file_path'][0],
-                             tissue_mask_resource_pool[tissue_mask_resource_pool_key]['functional_file_path'][1],
-                             tissue_regressor_nodes[tissue_regressor], 'functional_file_path')
-
-            nuisance.connect(tissue_mask_resource_pool[tissue_mask_resource_pool_key]['mask_file_path'][0],
-                             tissue_mask_resource_pool[tissue_mask_resource_pool_key]['mask_file_path'][1],
-                             tissue_regressor_nodes[tissue_regressor], 'mask_file_path')
 
     # now add in anaticor if its requested
     anaticor_regressor_to_functional_space = None
@@ -1047,72 +978,6 @@ def create_nuisance_workflow(use_ants, selector, name='nuisance'):
         nuisance.connect(inputspec, "fd_file_path", find_censors, "fd_file_path")
         nuisance.connect(inputspec, "dvars_file_path", find_censors, "dvars_file_path")
 
-    gather_nuisance_input_map = {'DVARS': ('dvars_file_path', inputspec, 'dvars_file_path'),
-                                 'FD': ('framewise_displacement_file_path', inputspec,
-                                        'framewise_displacement_file_path'),
-                                 'Motion': ('motion_parameters_file_path', inputspec, 'motion_parameters_file_path'),
-                                 }
-
-    for tissue_regressor in [('aCompCor', 'acompcorr_file_path'),
-                             ('tCompCor', 'tcompcorr_file_path'),
-                             ('GlobalSignal', 'global_summary_file_path'),
-                             ('GreyMatter', 'grey_matter_summary_file_path'),
-                             ('Ventricles', 'csf_summary_file_path'),
-                             ('WhiteMatter', 'white_matter_summary_file_path')]:
-        if tissue_regressor[0] in tissue_regressor_nodes:
-            gather_nuisance_input_map[tissue_regressor[0]] = (tissue_regressor[1],
-                                                              tissue_regressor_nodes[tissue_regressor[0]],
-                                                              'regressor_file_path')
-
-    if 'Censor' in selector and selector['Censor']:
-        gather_nuisance_input_map['Censor'] = ('censor_file_path', find_censors, 'out_file')
-
-    build_nuisance_regressors = None
-
-    # first check to see if we have any regressors, if so we need to combine them into a single file
-    build_nuisance_regressors_flag = False
-    for regressor_key in gather_nuisance_input_map:
-        if regressor_key in selector and selector[regressor_key]:
-            build_nuisance_regressors_flag = True
-            break
-
-    if build_nuisance_regressors_flag is True:
-
-        # make spike regressors if requested and combine all of the regressors into a single file
-        build_nuisance_regressors = pe.Node(util.Function(input_names=['functional_file_path',
-                                                                       'selector',
-                                                                       'output_file_path',
-                                                                       'grey_matter_summary_file_path',
-                                                                       'white_matter_summary_file_path',
-                                                                       'csf_summary_file_path',
-                                                                       'acompcorr_file_path',
-                                                                       'tcompcorr_file_path',
-                                                                       'global_summary_file_path',
-                                                                       'motion_parameters_file_path',
-                                                                       'framewise_displacement_file_path',
-                                                                       'dvars_file_path',
-                                                                       'censor_file_path'],
-                                                          output_names=['out_file'],
-                                                          function=gather_nuisance),
-                                            name="build_nuisance_regressors")
-
-        build_nuisance_regressors.inputs.selector = selector
-        build_nuisance_regressors.inputs.output_file_path = "nuisance_regressors.1D"
-
-        nuisance.connect(inputspec, 'functional_file_path', build_nuisance_regressors, 'functional_file_path')
-
-        for regressor_key, regressor_val in gather_nuisance_input_map.iteritems():
-
-            if regressor_key in selector and selector[regressor_key]:
-
-                if regressor_key is 'Censor' and selector[regressor_key]['censor_method'] is not 'SpikeRegression':
-                    continue
-
-                try:
-                    nuisance.connect(regressor_val[1], regressor_val[2], build_nuisance_regressors, regressor_val[0])
-                except:
-                    print("Error trying to connect {0} to build_nuisance_regressors".format(regressor_key))
-                    raise
 
     # the finale, invoke 3dTproject to perform nuisance variable regression
 

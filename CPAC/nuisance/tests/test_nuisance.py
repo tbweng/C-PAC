@@ -2,6 +2,9 @@ from CPAC import nuisance
 import nipype.pipeline.engine as pe
 import nipype.interfaces.utility as util
 import nipype.interfaces.afni as afni
+import nipype.interfaces.io as nio
+import os
+
 import pytest
 
 
@@ -258,6 +261,55 @@ def test_mask_summarize_time_course_multi_label():
                                                   method="PCA", num_pcs=5, mask_label=[[1, 2, 3]])
     assert os.path.isfile(outfile)
 
+
+def test_insert_mask_summarize_time_course_files_in():
+
+    test_workflow = pe.Workflow(name="test_insert_mask_summarize_time_course")
+
+    out_source = nuisance.insert_mask_summarize_time_course_node(test_workflow,
+                                                                 "/home/ccraddock/nuisance_test/functional.nii.gz",
+                                                                 "/home/ccraddock/nuisance_test/func_mask.nii.gz",
+                                                                 summarization_method="PCA", num_pcs=5,
+                                                                 mask_label=[[1, 2, 3]], node_name="mask_files_in")
+
+    datasink = pe.Node(nio.DataSink(), name='test_insert_mask_summarize_time_course_files_in_sinker')
+    datasink.inputs.base_directory = '/home/ccraddock/nuisance_test/output'
+    test_workflow.connect(out_source[0], out_source[1], datasink, 'test_insert_mask_summarize_time_course_files_in')
+
+    test_workflow.run()
+
+    assert os.path.isfile(
+        '/home/ccraddock/nuisance_test/output/test_insert_mask_summarize_time_course_files_in/'
+        'variant-PCAn5_mask_files_in.tsv')
+
+
+def test_insert_mask_summarize_time_course_nodes_in():
+
+    test_workflow = pe.Workflow(name="test_insert_mask_summarize_time_course")
+
+    functional_file_node = pe.Node(interface=util.IdentityInterface(fields=['functional_file'], mandatory_inputs=False),
+                                   name='functional_file_input')
+    functional_file_node.inputs.functional_file = "/home/ccraddock/nuisance_test/functional.nii.gz"
+
+    mask_file_node = pe.Node(interface=util.IdentityInterface(fields=['mask_file'], mandatory_inputs=False),
+                             name='mask_file_input')
+    mask_file_node.inputs.mask_file = "/home/ccraddock/nuisance_test/func_mask.nii.gz"
+
+    out_source = nuisance.insert_mask_summarize_time_course_node(test_workflow,
+                                                                 (functional_file_node, 'functional_file'),
+                                                                 (mask_file_node, 'mask_file'),
+                                                                 summarization_method="PCA", num_pcs=5,
+                                                                 mask_label=[[1, 2, 3]], node_name="mask_nodes_in")
+
+    datasink = pe.Node(nio.DataSink(), name='test_insert_mask_summarize_time_course_nodes_in_sinker')
+    datasink.inputs.base_directory = '/home/ccraddock/nuisance_test/output'
+    test_workflow.connect(out_source[0], out_source[1], datasink, 'test_insert_mask_summarize_time_course_nodes_in')
+
+    test_workflow.run()
+
+    assert os.path.isfile(
+        '/home/ccraddock/nuisance_test/output/test_insert_mask_summarize_time_course_nodes_in/'
+        'variant-PCAn5_mask_nodes_in.tsv')
 
 # @pytest.mark.skip(reason="too slow")
 def test_nuisance_workflow_type1():
