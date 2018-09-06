@@ -488,12 +488,14 @@ def run(config_file, subject_list_file, p_name=None, plugin=None,
         if not os.path.exists(c.workingDirectory):
             try:
                 os.makedirs(c.workingDirectory)
-            except:
-                err = "\n\n[!] CPAC says: Could not create the working " \
-                      "directory: %s\n\nMake sure you have permissions " \
-                      "to write to this directory.\n\n" % c.workingDirectory
-                raise Exception(err)
-                
+            except OSError as e:
+                if e.errno != errno.EEXIST:
+                    err = "\n\n[!] CPAC says: Could not create the working " \
+                          "directory: %s\n\nMake sure you have permissions " \
+                          "to write to this directory.\n\n" % c.workingDirectory
+                    print(err)
+                    raise
+
         pid = open(os.path.join(c.workingDirectory, 'pid.txt'), 'w')
         # Init job queue
         jobQueue = []

@@ -5121,6 +5121,7 @@ def prep_workflow(sub_dict, c, strategies, run, pipeline_timing_info=None,
                         #qc_output_folder = os.path.join(pipeline_out_base, subject_id, 'qc_files_here')
                         #For each subject, create a QC index.html page
                         #make_QC_html_pages(qc_output_folder)
+                print('CC! output directory'.format(c.outputDirectory))
                 ds.inputs.base_directory = c.outputDirectory
 
                 ds.inputs.creds_path = creds_path
