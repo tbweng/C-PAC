@@ -5160,7 +5160,7 @@ def prep_workflow(sub_dict, c, strategies, run, pipeline_timing_info=None,
                 sink_idx += 1
                 logger.info('sink index: %s' % sink_idx)
 
-            d_name = os.path.join(c.logDirectory, ds.inputs.container)
+            d_name = os.path.join(log_dir, ds.inputs.container)
 
             if not os.path.exists(d_name):
                 os.makedirs(d_name)
@@ -5367,7 +5367,7 @@ def prep_workflow(sub_dict, c, strategies, run, pipeline_timing_info=None,
             # warning in .csv that some runs may be partial
             # code to delete .tmp file
 
-            timing_temp_file_path = os.path.join(c.logDirectory,
+            timing_temp_file_path = os.path.join(log_dir,
                                                  '%s_pipeline_timing.tmp' % unique_pipeline_id)
 
             if not os.path.isfile(timing_temp_file_path):
@@ -5409,10 +5409,10 @@ def prep_workflow(sub_dict, c, strategies, run, pipeline_timing_info=None,
                                  'Status']
                 timeHeader = dict((n, n) for n in gpaTimeFields)
 
-                timeCSV = open(os.path.join(c.logDirectory,
+                timeCSV = open(os.path.join(clog_dir,
                                             'cpac_individual_timing_%s.csv' % c.pipelineName),
                                'a')
-                readTimeCSV = open(os.path.join(c.logDirectory,
+                readTimeCSV = open(os.path.join(log_dir,
                                                 'cpac_individual_timing_%s.csv' % c.pipelineName),
                                    'rb')
                 timeWriter = csv.DictWriter(timeCSV, fieldnames=gpaTimeFields)
@@ -5481,7 +5481,7 @@ def prep_workflow(sub_dict, c, strategies, run, pipeline_timing_info=None,
                     (time.time() - pipeline_start_time) / 60)) + \
                     (
                     "Timing information saved in %s/cpac_individual_timing_%s.csv \n" % (
-                    c.logDirectory, c.pipelineName)) + \
+                    log_dir, c.pipelineName)) + \
                     (
                     "System time of start:      %s \n" % pipeline_start_datetime) + (
                     "System time of completion: %s" % strftime(
