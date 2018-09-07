@@ -13,6 +13,7 @@ from CPAC.utils import Configuration
 import yaml
 import time
 from time import strftime
+import errno
 
 
 # Validate length of directory
@@ -488,13 +489,12 @@ def run(config_file, subject_list_file, p_name=None, plugin=None,
         if not os.path.exists(c.workingDirectory):
             try:
                 os.makedirs(c.workingDirectory)
-            except FileExistsError:
-                pass
-            except PermissionError:
-                print("\n\n[!] CPAC says: Could not create the working "
-                      "directory: {0}\n\nMake sure you have permissions "
-                      "to write to this directory.\n\n".format(c.workingDirectory))
-                raise
+            except OSError as e:
+                if e.errno != errno.EEXIST:
+                    print("\n\n[!] CPAC says: Could not create the working "
+                          "directory: {0}\n\nMake sure you have permissions "
+                          "to write to this directory.\n\n".format(c.workingDirectory))
+                    raise
 
         pid = open(os.path.join(c.workingDirectory, 'pid.txt'), 'w')
         # Init job queue
