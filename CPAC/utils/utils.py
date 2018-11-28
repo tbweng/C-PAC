@@ -2294,7 +2294,13 @@ def check_config_resources(c):
         if total_user_cores > num_cores:
             err_msg = 'Config file specifies more subjects running in ' \
                       'parallel than number of threads available. Change ' \
-                      'this and try again'
+                      'this and try again.\n\nNum participants at once: ' \
+                      '{0}\nNum cores per participant: {1}\nTotal number ' \
+                      'of cores: {2}\n\nNum cores available: {3}' \
+                      '\n'.format(c.numParticipantsAtOnce,
+                                  c.maxCoresPerParticipant,
+                                  total_user_cores,
+                                  num_cores)
             raise Exception(err_msg)
         else:
             num_cores_per_sub = c.maxCoresPerParticipant

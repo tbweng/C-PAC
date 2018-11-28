@@ -599,17 +599,18 @@ def prep_group_analysis_workflow(model_df, pipeline_config_path, model_name,
 
     model_path = os.path.join(out_dir, 'model_files')
 
-    second_half_out = \
-        out_dir.split("group_analysis_results_%s" % pipeline_ID)[1]
-
     # generate working directory for this output's group analysis run
     work_dir = os.path.join(pipeline_config_obj.workingDirectory,
-                            'cpac_group_analysis', 'FSL_FEAT', 
-                            second_half_out.lstrip("/"))
+                            'cpac_group_analysis', 'FSL_FEAT',
+                            'pipeline_{0}'.format(pipeline_ID),
+                            'group_model_{0}'.format(model_name), resource_id,
+                            series_or_repeated_label, preproc_strat)
 
     log_dir = os.path.join(pipeline_config_obj.logDirectory,
                            'cpac_group_analysis', 'FSL_FEAT',
-                           second_half_out.lstrip("/"))
+                           'pipeline_{0}'.format(pipeline_ID),
+                           'group_model_{0}'.format(model_name), resource_id,
+                           series_or_repeated_label, preproc_strat)
 
     # create the actual directories
     create_dir(model_path, "group analysis output")

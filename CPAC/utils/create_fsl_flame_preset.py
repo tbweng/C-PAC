@@ -483,7 +483,7 @@ def preset_unpaired_two_group(group_list, pheno_df, groups, pheno_sub_label,
         # Patsy design formula
         new_group_set = []
         for group in group_set:
-            group = group.lstrip(' ').rstrip(' ')
+            group = str(group).lstrip(' ').rstrip(' ')
             group = group.replace(' ', '_').replace('-', '_')
             new_group_set.append(group)
 

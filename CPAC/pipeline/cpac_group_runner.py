@@ -106,7 +106,6 @@ def gather_nifti_globs(pipeline_output_folder, resource_list, pull_func=False,
         raise Exception(err)
 
     if derivatives is None:
-
         keys_csv = p.resource_filename('CPAC', 'resources/cpac_outputs.csv')
         try:
             keys = pd.read_csv(keys_csv)
@@ -133,12 +132,11 @@ def gather_nifti_globs(pipeline_output_folder, resource_list, pull_func=False,
 
     # this is just to keep the fsl feat config file derivatives entries
     # nice and lean
-    search_dirs = [
-        resource_name
-        for resource_name in resource_list
-        if any([resource_name in derivative_name
-                for derivative_name in derivatives])
-    ]
+    search_dirs = []
+    for derivative_name in derivatives:
+        for resource_name in resource_list:
+            if resource_name in derivative_name:
+                search_dirs.append(derivative_name)
 
     # grab MeanFD_Jenkinson just in case
     search_dirs += ["power_params"]
@@ -171,7 +169,7 @@ def gather_nifti_globs(pipeline_output_folder, resource_list, pull_func=False,
         err = "\n\n[!] No output filepaths found in the pipeline output " \
               "directory provided for the derivatives selected!\n\nPipeline "\
               "output directory provided: %s\nDerivatives selected:%s\n\n" \
-              % (pipeline_output_folder, resource_list)
+              % (pipeline_output_folder, search_dirs)#resource_list)
         raise Exception(err)
 
     return nifti_globs
@@ -336,12 +334,11 @@ def create_output_dict_list(nifti_globs, pipeline_output_folder,
 
     # this is just to keep the fsl feat config file derivatives entries
     # nice and lean
-    search_dirs = [
-        resource_name
-        for resource_name in resource_list
-        if any([resource_name in derivative_name
-                for derivative_name in derivatives])
-    ]
+    search_dirs = []
+    for derivative_name in derivatives:
+        for resource_name in resource_list:
+            if resource_name in derivative_name:
+                search_dirs.append(derivative_name)
 
     # grab MeanFD_Jenkinson just in case
     search_dirs += ["power_params"]
@@ -391,7 +388,7 @@ def create_output_dict_list(nifti_globs, pipeline_output_folder,
             new_row_dict["Series"] = series_id
             new_row_dict["Filepath"] = filepath
             
-            print('{0} - {1} - {2}'.format(unique_id, series_id, 
+            print('{0} - {1} - {2}'.format(unique_id, series_id,
                   resource_id))
 
             if get_motion:
@@ -456,6 +453,10 @@ def gather_outputs(pipeline_folder, resource_list, inclusion_list,
                    exts=['nii', 'nii.gz']):
 
     # probably won't have a session list due to subject ID format!
+
+    if '.' in pipeline_folder.split('/')[0]:
+        import os
+        pipeline_folder = pipeline_folder.replace('.', os.getcwd())
 
     nifti_globs = gather_nifti_globs(
         pipeline_folder,
@@ -1657,8 +1658,6 @@ def run_isc_group(pipeline_dir, out_dir, working_dir, crash_dir,
                 df_dct[strat_scan] = strat_df[strat_df["Series"] == strat_scan]
         else:
             df_dct[list(set(strat_df["Series"]))[0]] = strat_df
-
-        print(working_dir)
 
         if isc:
             for df_scan in df_dct.keys():
