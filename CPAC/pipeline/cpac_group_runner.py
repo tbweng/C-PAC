@@ -435,10 +435,10 @@ def create_output_df_dict(output_dict_list, inclusion_list=None):
         
         # drop whatever is not in the inclusion lists
         if inclusion_list:
-            new_df = new_df[new_df.participant_session_id.isin(inclusion_list)]
+            new_df = new_df[new_df.participant_id.isin(inclusion_list)]
 
         if new_df.empty:
-            print("No outputs found for {0} for the participant-sessions "
+            print("No outputs found for {0} for the participants "
                   "listed in the the group analysis participant list you "
                   "used. Skipping generating a model for this "
                   "output.".format(unique_resource_id))
@@ -789,10 +789,10 @@ def prep_feat_inputs(group_config_file, pipeline_output_folder):
             inclusion_list = load_text_file(group_model.participant_list,
                                             "group-level analysis "
                                             "participant list")
+            output_df = output_df[output_df["participant_id"].isin(inclusion_list)]
         else:
             inclusion_list = [x for x in os.listdir(pipeline_output_folder) if os.path.isdir(x)]
-
-        output_df = output_df[output_df["participant_session_id"].isin(inclusion_list)]
+            output_df = output_df[output_df["participant_session_id"].isin(inclusion_list)]
 
         new_pheno_df = pheno_df.copy()
 
@@ -801,6 +801,7 @@ def prep_feat_inputs(group_config_file, pipeline_output_folder):
         #  '0002601' and the phenotype will have '2601')
         sublist_subs = output_df['participant_id']
         pheno_subs = list(new_pheno_df['participant_id'])
+
         for sub in sublist_subs:
             if sub in pheno_subs:
                 # okay, there's at least one match

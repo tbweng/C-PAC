@@ -361,7 +361,7 @@ def split_groups(pheno_df, group_ev, ev_list, cat_list):
     grp_vector = pheno_df[group_ev].map(keymap)
             
     # start the split
-    pheno_df["subject_key"] = pheno_df["Participant"]
+    pheno_df["subject_key"] = pheno_df["participant_id"]
     join_column = ["subject_key"]
         
     if "Session" in pheno_df:
@@ -453,16 +453,16 @@ def check_multicollinearity(matrix):
 
     import numpy as np
 
-    print "\nChecking for multicollinearity in the model.."
+    print("\nChecking for multicollinearity in the model..")
 
     U, s, V = np.linalg.svd(matrix)
 
     max_singular = np.max(s)
     min_singular = np.min(s)
 
-    print "Max singular: ", max_singular
-    print "Min singular: ", min_singular
-    print "Rank: ", np.linalg.matrix_rank(matrix), "\n"
+    print("Max singular: ", max_singular)
+    print("Min singular: ", min_singular)
+    print("Rank: ", np.linalg.matrix_rank(matrix), "\n")
 
     if min_singular == 0:
 
@@ -685,7 +685,6 @@ def prep_group_analysis_workflow(model_df, model_name,
 
     # create 4D merged copefile, in the correct order, identical to design
     # matrix
-    #-----------------------------------------------------
     
     # calculate measure means, and demean
     if "Measure_Mean" in design_formula:
