@@ -502,7 +502,7 @@ def create_nuisance_workflow(pipeline_resource_pool, nuisance_configuration_sele
                      'FD': ('framewise_displacement_file_path', (inputspec, 'framewise_displacement_file_path')),
                      'Motion': ('motion_parameters_file_path', (inputspec, 'motion_parameters_file_path'))}
 
-    for regressor_type, regressor_specification in regressor_map.iteritems():
+    for regressor_type, regressor_specification in regressor_map.items():
 
         # go ahead and set summary_method for tCompCor and aCompCor so make the logic easier
         if regressor_type in ['tCompCor', 'aCompCor']:
@@ -673,15 +673,12 @@ def create_nuisance_workflow(pipeline_resource_pool, nuisance_configuration_sele
     build_nuisance_regressors = None
 
     # first check to see if we have any regressors, if so we need to combine them into a single file
-    build_nuisance_regressors_flag = False
-    for regressor_key in gather_nuisance_input_map:
-        if regressor_key in selector and selector[regressor_key]:
-            build_nuisance_regressors_flag = True
-            break
+    build_nuisance_regressors_flag = any(
+        regressor_key in selector and selector[regressor_key]
+        for regressor_key in gather_nuisance_input_map
+    )
 
-    if build_nuisance_regressors_flag is True:
-
-
+    if build_nuisance_regressors_flag:
 
         for regressor_key, regressor_val in gather_nuisance_input_map.iteritems():
 
@@ -993,7 +990,7 @@ def create_nuisance_workflow(pipeline_resource_pool, nuisance_configuration_sele
     nuisance.connect(inputspec, 'functional_brain_mask_file_path', nuisance_regression,
                      'mask')
 
-    if build_nuisance_regressors_flag is True:
+    if build_nuisance_regressors_flag:
         nuisance.connect(build_nuisance_regressors, 'out_file', nuisance_regression, 'orthogonalize_file')
 
     if 'Censor' in selector and 'censor_method' in selector['Censor']:
