@@ -1,10 +1,11 @@
+import os
+
 import nipype.pipeline.engine as pe
 import nipype.interfaces.utility as util
 import nipype.interfaces.fsl as fsl
 import nipype.interfaces.ants as ants
 from nipype.interfaces import afni
-import nuisance_afni_interfaces
-import os
+
 from CPAC.nuisance import find_offending_time_points, create_temporal_variance_mask
 import CPAC.utils as utils
 
@@ -870,9 +871,7 @@ def create_nuisance_workflow(pipeline_resource_pool, nuisance_configuration_sele
 
     # now that we have the tissue masks, we can extract the various tissue regressors
     for tissue_regressor in ['aCompCor', 'GreyMatter', 'WhiteMatter', 'Ventricles', 'GlobalSignal']:
-
         if tissue_regressor in selector and selector[tissue_regressor]:
-
             if tissue_regressor is 'aCompCor':
                 if 'tissues' not in selector[tissue_regressor]:
                     selector[tissue_regressor]['tissues'] = "WM+CSF"
@@ -894,7 +893,7 @@ def create_nuisance_workflow(pipeline_resource_pool, nuisance_configuration_sele
         # '3dLocalstat -prefix __WMeLOCAL_r${r} -nbhd 'SPHERE('${r}')' \
         #    -stat mean -mask  __mask_WMe${view} \
         #    -use_nonmask ${fn_epi}'
-        construct_anaticor_regressor = pe.Node(interface=nuisance_afni_interfaces.Localstat(),
+        construct_anaticor_regressor = pe.Node(interface=afni.Localstat(),
                                                name="construct_anaticor_regressor")
 
         construct_anaticor_regressor.interface.num_threads = 4
@@ -978,7 +977,7 @@ def create_nuisance_workflow(pipeline_resource_pool, nuisance_configuration_sele
 
     # the finale, invoke 3dTproject to perform nuisance variable regression
 
-    nuisance_regression = pe.Node(interface=nuisance_afni_interfaces.Tproject(), name='nuisance_regression')
+    nuisance_regression = pe.Node(interface=afni.TProject(), name='nuisance_regression')
 
     nuisance_regression.inputs.out_file = 'residuals.nii.gz'
     nuisance_regression.inputs.outputtype = 'NIFTI_GZ'
