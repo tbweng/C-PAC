@@ -118,6 +118,8 @@ def gather_nuisance(functional_file_path, selector, output_file_path, grey_matte
 
     regressor_length = functional_image.shape[3]
 
+    motion_labels = ["RotY", "RotX", "RotZ", "Y", "X", "Z"]
+
     for regressor_type in ['aCompCorr', 'tCompCorr', 'Ventricles', 'GlobalSignal', 'GreyMatter', 'WhiteMatter',
                            'Motion', 'DVARS', 'FD']:
         if regressor_type in selector and selector[regressor_type]:
@@ -175,8 +177,6 @@ def gather_nuisance(functional_file_path, selector, output_file_path, grey_matte
                         not selector[regressor_type][regressor_derivative]:
 
                     selector[regressor_type][regressor_derivative] = False
-
-            motion_labels = ["RotY", "RotX", "RotZ", "Y", "X", "Z"]
 
             # add in the regressors, making sure to also add in the column name
             for regressor_index in range(0, regressors.shape[1]):
