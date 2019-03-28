@@ -51,6 +51,8 @@ def create_lesion_preproc(wf_name='lesion_preproc'):
     lesion_preproc : workflow
         Lesion preprocessing Workflow
 
+    Notes
+    -----
     Workflow Inputs::
         inputspec.lesion : string
             User input lesion mask, in any of the 8 orientations
