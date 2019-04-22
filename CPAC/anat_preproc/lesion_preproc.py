@@ -48,7 +48,7 @@ def create_lesion_preproc(wf_name='lesion_preproc'):
 
     Returns
     -------
-    lesion_preproc : workflow
+    preproc : workflow
         Lesion preprocessing Workflow
 
     Notes
