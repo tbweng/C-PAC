@@ -90,14 +90,15 @@ def init_robust_template(wf_name='init_robust'):
     return init_template
 
 
-def create_temporary_template(img_list, avg_method='median'):
+def create_temporary_template(img_list, out_path, avg_method='median'):
     """
     Average all the 3D images of the list into one 3D image
     WARNING---the function assumes that all the images have the same header,
     the output image will have the same header as the first image of the list
     Parameters---
     ----------
-    img_list: list of Nifti1Image
+    img_list: list of str
+        list of the paths to the images
     avg_method: str
         function names from numpy library such as 'median', 'mean', 'std' ...
 
@@ -112,9 +113,11 @@ def create_temporary_template(img_list, avg_method='median'):
         return img_list[0]
 
     avg_data = getattr(np, avg_method)(
-        np.asarray([img.get_data() for img in img_list]), 0)
+        np.asarray([nib.load(img).get_data() for img in img_list]), 0)
 
-    return nib.Nifti1Image(avg_data, img_list[0].affine)
+    nii = nib.Nifti1Image(avg_data, nib.load(img_list[0]).affine)
+    nib.save(nii, out_path)
+    return out_path
 
 
 def register_img_list(img_list, ref_img, output_folder, dof=12,
@@ -155,7 +158,7 @@ def register_img_list(img_list, ref_img, output_folder, dof=12,
                        for img in img_list]
 
     output_mat_list = [os.path.join(output_folder,
-                                    ntpath.basename(img).split('.')[0])
+                                    ntpath.basename(img).split('.')[0] + '.mat')
                        for img in img_list]
 
     linear_reg = fsl.FLIRT()
@@ -172,10 +175,14 @@ def register_img_list(img_list, ref_img, output_folder, dof=12,
     multiple_linear_reg.inputs.out_file = output_img_list
     multiple_linear_reg.inputs.out_matrix_file = output_mat_list
 
+    # fixed inputs
     multiple_linear_reg.inputs.cost = cost
     multiple_linear_reg.inputs.dof = dof
     multiple_linear_reg.inputs.interp = interp
     multiple_linear_reg.inputs.reference = ref_img
+
+    multiple_linear_reg.outputs.out_file = output_img_list
+    multiple_linear_reg.outputs.out_matrix_file = output_mat_list
 
     return multiple_linear_reg
 
@@ -183,18 +190,47 @@ def register_img_list(img_list, ref_img, output_folder, dof=12,
 def norm_transformation(flirt_mat):
     # Translation vector
     translation = flirt_mat[0:3, 3]
+    # 3x3 matrice of rotation, scaling and skewing
     oth_affine_transform = flirt_mat[0:3, 0:3]
-    tr_norm = np.norm(translation)
-    affine_norm = np.norm(oth_affine_transform - np.identity(3))
+    tr_norm = np.linalg.norm(translation)
+    affine_norm = np.linalg.norm(oth_affine_transform - np.identity(3), 'fro')
     return pow(tr_norm, 2) + pow(affine_norm, 2)
 
 
-def template_convergence(mat_file1, mat_file2, convergence_threshold=0):
-    mat1 = np.loadtxt(mat_file1)
-    mat2 = np.loadtxt(mat_file2)
-    distance = norm_transformation(mat1) - norm_transformation(mat2)
+def template_convergence(mat_file,
+                         convergence_threshold=np.finfo(np.float64).eps):
+    mat1 = np.loadtxt(mat_file)
+    distance = norm_transformation(mat1)
 
     return abs(distance) <= convergence_threshold
+
+
+def template_creation_loop(image_list, output_folder,
+                           convergence_threshold=np.finfo(np.float64).eps):
+    if not image_list:
+        print('ERROR create_temporary_template: image list is empty')
+
+    img_list = image_list
+    converged = False
+    tmp_template = os.path.join(output_folder, 'tmp_template.nii.gz')
+
+    while not converged:
+        tmp_template = create_temporary_template(img_list,
+                                                 tmp_template,
+                                                 avg_method='median')
+        reg_list_node = register_img_list(img_list,
+                                          tmp_template,
+                                          output_folder,
+                                          dof=12,
+                                          interp='trilinear',
+                                          cost='corratio')
+        reg_list_node.run()
+        
+        img_list = reg_list_node.inputs.out_file
+        mat_list = reg_list_node.inputs.out_matrix_file
+        convergence_list = [template_convergence(
+            mat, convergence_threshold) for mat in mat_list]
+        converged = all(convergence_list)
 
 
 def mri_robust_template(wf_name='robust_template'):
