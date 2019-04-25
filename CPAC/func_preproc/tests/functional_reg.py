@@ -98,7 +98,7 @@ def create_temporary_template(img_list, out_path, avg_method='median'):
     Parameters---
     ----------
     img_list: list of str
-        list of the paths to the images
+        list of images paths
     avg_method: str
         function names from numpy library such as 'median', 'mean', 'std' ...
 
@@ -205,32 +205,71 @@ def template_convergence(mat_file,
     return abs(distance) <= convergence_threshold
 
 
-def template_creation_loop(image_list, output_folder,
+def template_creation_loop(img_list, output_folder,
+                           init_reg=MapNode, avg_method='median', dof=12,
+                           interp='trilinear', cost='corratio',
                            convergence_threshold=np.finfo(np.float64).eps):
-    if not image_list:
+    """
+
+    Parameters
+    ----------
+    img_list: list of str
+        list of images paths
+    output_folder
+    init_reg: nipype.MapNode
+        the output of the function register_img_list with another reference
+        Reuter et al. 2012 (NeuroImage) section "Improved template estimation"
+        doi:10.1016/j.neuroimage.2012.02.084 recommend to use a ramdomly
+        selected image from the input dataset
+    avg_method: str
+        function names from numpy library such as 'median', 'mean', 'std' ...
+    dof: integer (int of long)
+        number of transform degrees of freedom (FLIRT) (12 by default)
+    interp: str
+        ('trilinear' (default) or 'nearestneighbour' or 'sinc' or 'spline')
+        final interpolation method used in reslicing
+    cost: str
+        ('mutualinfo' or 'corratio' (default) or 'normcorr' or 'normmi' or
+         'leastsq' or 'labeldiff' or 'bbr')
+        cost function
+    convergence_threshold: float
+        (numpy.finfo(np.float64).eps (default)) threshold for the convergence
+        The threshold is how different from no transformation is the
+        transformation matrix.
+
+    Returns
+    -------
+    template: str
+        path to the final template
+
+    """
+    if not img_list:
         print('ERROR create_temporary_template: image list is empty')
 
-    img_list = image_list
+    image_list = img_list
     converged = False
     tmp_template = os.path.join(output_folder, 'tmp_template.nii.gz')
 
     while not converged:
-        tmp_template = create_temporary_template(img_list,
+        tmp_template = create_temporary_template(image_list,
                                                  tmp_template,
                                                  avg_method='median')
-        reg_list_node = register_img_list(img_list,
+        reg_list_node = register_img_list(image_list,
                                           tmp_template,
                                           output_folder,
                                           dof=12,
                                           interp='trilinear',
                                           cost='corratio')
         reg_list_node.run()
-        
-        img_list = reg_list_node.inputs.out_file
+
+        image_list = reg_list_node.inputs.out_file
         mat_list = reg_list_node.inputs.out_matrix_file
         convergence_list = [template_convergence(
             mat, convergence_threshold) for mat in mat_list]
         converged = all(convergence_list)
+
+    template = tmp_template
+    return template
 
 
 def mri_robust_template(wf_name='robust_template'):
