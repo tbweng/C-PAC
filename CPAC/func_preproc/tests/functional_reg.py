@@ -2,6 +2,7 @@
 import os
 import ntpath
 import numpy as np
+import six
 from multiprocessing.dummy import Pool as ThreadPool
 
 
@@ -428,14 +429,34 @@ def center_align(image, reference):
     return transformed, c_of_mass.affine
 
 
-def affine_registration(image, reference, init_affine):
+def affine_registration(image, reference, init_affine, transform_mode='affine'):
     from dipy.align.imaffine import (transform_centers_of_mass,
-                                     AffineMap,
                                      MutualInformationMetric,
                                      AffineRegistration)
     from dipy.align.transforms import (TranslationTransform3D,
                                        RigidTransform3D,
                                        AffineTransform3D)
+
+    # Maybe I can do something to avoid problems if we add an option 
+    tr_dict = {'c_of_mass': [1, 0, 0, 0],
+               'translation': [1, 1, 0, 0],
+               'rigid': [1, 1, 1, 0],
+               'affine': [1, 1, 1, 1]}
+    if isinstance(transform_mode, list):
+        if len(transform_mode) == len(tr_dict.keys()):
+            tr_mode = transform_mode
+        else:
+            raise ValueError("")
+    elif isinstance(transform_mode, six.string_types):
+        tr_mode = tr_dict[transform_mode]
+    else:
+        raise TypeError("transform_mode can be either a string, a list or an " +
+                        "int/long")
+
+    if not any(tr_mode):
+        print("affine_registration didn't do anything " +
+              " (transform_mode == [0, 0, 0, 0])")
+        return nifti_image_input(image)
 
     img = nifti_image_input(image)
     ref = nifti_image_input(reference)
@@ -446,44 +467,58 @@ def affine_registration(image, reference, init_affine):
     static_grid2world = img.affine
     moving_grid2world = ref.affine
 
-    nbins = 32
-    sampling_prop = None
-    metric = MutualInformationMetric(nbins, sampling_prop)
-    level_iters = [10000, 1000, 100]
-    sigmas = [3.0, 1.0, 0.0]
-    factors = [4, 2, 1]
-
-    affreg = AffineRegistration(metric=metric,
-                                level_iters=level_iters,
-                                sigmas=sigmas,
-                                factors=factors)
-
-    transform = TranslationTransform3D()
-    params0 = None
     starting_affine = init_affine
-    translation = affreg.optimize(static, moving, transform, params0,
-                                  static_grid2world, moving_grid2world,
-                                  starting_affine=starting_affine)
 
-    transformed = translation.transform(moving)
+    if tr_mode[0]:
+        c_of_mass = transform_centers_of_mass(static, static_grid2world,
+                                              moving, moving_grid2world)
 
-    transform = RigidTransform3D()
-    params0 = None
-    starting_affine = translation.affine
-    rigid = affreg.optimize(static, moving, transform, params0,
-                            static_grid2world, moving_grid2world,
-                            starting_affine=starting_affine)
+        starting_affine = c_of_mass.affine
 
-    transformed = rigid.transform(moving)
+        transformed = c_of_mass.transform(moving)
 
-    transform = AffineTransform3D()
-    params0 = None
-    starting_affine = rigid.affine
-    affine = affreg.optimize(static, moving, transform, params0,
-                             static_grid2world, moving_grid2world,
-                             starting_affine=starting_affine)
+    if tr_mode[1] or tr_mode[2] or tr_mode[3]:
+        nbins = 32
+        sampling_prop = None
+        metric = MutualInformationMetric(nbins, sampling_prop)
+        level_iters = [10000, 1000, 100]
+        sigmas = [3.0, 1.0, 0.0]
+        factors = [4, 2, 1]
 
-    transformed = affine.transform(moving)
+        affreg = AffineRegistration(metric=metric,
+                                    level_iters=level_iters,
+                                    sigmas=sigmas,
+                                    factors=factors)
+
+    if tr_mode[1]:
+        transform = TranslationTransform3D()
+        params0 = None
+        translation = affreg.optimize(static, moving, transform, params0,
+                                      static_grid2world, moving_grid2world,
+                                      starting_affine=starting_affine)
+        starting_affine = translation.affine
+        transformed = translation.transform(moving)
+
+    if tr_mode[2]:
+        transform = RigidTransform3D()
+        params0 = None
+
+        rigid = affreg.optimize(static, moving, transform, params0,
+                                static_grid2world, moving_grid2world,
+                                starting_affine=starting_affine)
+        starting_affine = rigid.affine
+
+        transformed = rigid.transform(moving)
+
+    if tr_mode[3]:
+        transform = AffineTransform3D()
+        params0 = None
+
+        affine = affreg.optimize(static, moving, transform, params0,
+                                 static_grid2world, moving_grid2world,
+                                 starting_affine=starting_affine)
+
+        transformed = affine.transform(moving)
 
     out_image = nib.Nifti1Image(transformed, static_grid2world)
 
