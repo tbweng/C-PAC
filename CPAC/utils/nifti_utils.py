@@ -5,6 +5,33 @@ import six
 import nibabel as nib
 
 
+def nifti_image_input(image):
+    """
+    Test if an input is a path or a nifti.image
+    Parameters
+    ----------
+    image: str or nibabel.nifti1.Nifti1Image
+        path to the nifti file to be inverted or
+        the image already loaded through nibabel
+
+    Returns
+    -------
+    img: nibabel.nifti1.Nifti1Image
+        load and return the nifti image if image is a path, otherwise simply
+        return image
+    """
+    if isinstance(image, nib.nifti1.Nifti1Image):
+        img = image
+    elif isinstance(image, six.string_types):
+        if not os.path.exists(image):
+            raise ValueError(str(image) + " does not exist.")
+        else:
+            img = nib.load(image)
+    else:
+        raise TypeError("Image can be either a string or a nifti1.Nifti1Image")
+    return img
+
+
 def more_zeros_than_ones(image):
     """
     Return True is there is more zeros than other values in a given nifti image.
@@ -18,15 +45,7 @@ def more_zeros_than_ones(image):
     -------
     more_zeros: boolean
     """
-    if isinstance(image, nib.nifti1.Nifti1Image):
-        img = image
-    elif isinstance(image, six.string_types):
-        if not os.path.exists(image):
-            raise ValueError(str(image) + " does not exist.")
-        else:
-            img = nib.load(image)
-    else:
-        raise TypeError("Image can be either a string or a nifti1.Nifti1Image")
+    img = nifti_image_input(image)
 
     data = img.get_data()
     nb_zeros = len(np.where(data == 0)[0])
@@ -48,15 +67,7 @@ def inverse_nifti_values(image):
     -------
     output: Nibabel Nifti1Image
     """
-    if isinstance(image, nib.nifti1.Nifti1Image):
-        img = image
-    elif isinstance(image, six.string_types):
-        if not os.path.exists(image):
-            raise ValueError(str(image) + " does not exist.")
-        else:
-            img = nib.load(image)
-    else:
-        raise TypeError("Image can be either a string or a nifti1.Nifti1Image")
+    img = nifti_image_input(image)
 
     data = img.get_data()
     zeros = np.where(data)

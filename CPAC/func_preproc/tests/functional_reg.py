@@ -1,14 +1,16 @@
 
 import os
-import six
 import ntpath
 import numpy as np
+from multiprocessing.dummy import Pool as ThreadPool
+
 
 import nibabel as nib
 import nipype.pipeline.engine as pe
 import nipype.interfaces.utility as util
 import nipype.interfaces.fsl as fsl
 from nipype import MapNode
+from CPAC.utils.nifti_utils import nifti_image_input
 
 
 def read_ants_mat(ants_mat_file):
@@ -76,15 +78,7 @@ def simple_stats(image, method='mean', axis=3):
     >>> out_nii = simple_stats(fmri_img_path, method='median')
 
     """
-    if isinstance(image, nib.nifti1.Nifti1Image):
-        img = image
-    elif isinstance(image, six.string_types):
-        if not os.path.exists(image):
-            raise ValueError(str(image) + " does not exist.")
-        else:
-            img = nib.load(image)
-    else:
-        raise TypeError("Image can be either a string or a nifti1.Nifti1Image")
+    img = nifti_image_input(image)
 
     data = img.get_data()
     out_data = getattr(np, method)(data, axis)
@@ -373,8 +367,10 @@ def template_creation_loop(img_list, output_folder,
         print('ERROR create_temporary_template: image list is empty')
 
     if init_reg is not None:
+        init_reg.run()
         image_list = init_reg.inputs.out_file
         mat_list = init_reg.inputs.out_matrix_file
+        # test if every transformation matrix has reached the convergence
         convergence_list = [template_convergence(
             mat, 'flirt', convergence_threshold) for mat in mat_list]
         converged = all(convergence_list)
@@ -398,68 +394,120 @@ def template_creation_loop(img_list, output_folder,
 
         image_list = reg_list_node.inputs.out_file
         mat_list = reg_list_node.inputs.out_matrix_file
+        # test if every transformation matrix has reached the convergence
         convergence_list = [template_convergence(
-            mat, convergence_threshold) for mat in mat_list]
+            mat, 'flirt', convergence_threshold) for mat in mat_list]
         converged = all(convergence_list)
 
     template = tmp_template
     return template
 
 
-def mri_robust_template(wf_name='robust_template'):
-    """
+# multithread + dipy version of the freesurfer longitudinal template creation
 
-    Parameters
-    ----------
-    wf_name: str
-        workflow's name
+# http://nipy.org/dipy/reference/dipy.align.html#dipy.align.imaffine.transform_centers_of_mass
+# as the first step to ensure a minimal alignment between the images
 
-    Returns
-    -------
-    robust_template : workflow
+def center_align(image, reference):
+    from dipy.align.imaffine import transform_centers_of_mass
 
-    """
+    img = nifti_image_input(image)
+    ref = nifti_image_input(reference)
 
-    robust_template = pe.Workflow(name=wf_name)
+    moving = img.get_data()
+    static = ref.get_data()
 
-    inputspec = pe.Node(util.IdentityInterface(
-        fields=['moving',
-                'avg_method',
-                'ref',
-                'interp']),
-        name='inputspec')
+    static_grid2world = img.affine
+    moving_grid2world = ref.affine
 
-    outputspec = pe.Node(
-        util.IdentityInterface(fields=['transform_linear_xfm']),
-        name='outputspec')
+    c_of_mass = transform_centers_of_mass(static, static_grid2world,
+                                          moving, moving_grid2world)
 
-    init_wf = init_robust_template()
+    transformed = c_of_mass.transform(moving)
+    
+    return transformed, c_of_mass.affine
 
-    linear_reg = pe.Node(interface=fsl.FLIRT(),
-                         name='linear_func_to_anat')
-    linear_reg.inputs.cost = 'corratio'
-    linear_reg.inputs.dof = 12
-    linear_reg.inputs.interp = 'trilinear'
 
-    # Initialization of the within subject template creation
-    robust_template.connect(inputspec, 'moving',
-                            init_wf, 'image')
+def affine_registration(image, reference, init_affine):
+    from dipy.align.imaffine import (transform_centers_of_mass,
+                                     AffineMap,
+                                     MutualInformationMetric,
+                                     AffineRegistration)
+    from dipy.align.transforms import (TranslationTransform3D,
+                                       RigidTransform3D,
+                                       AffineTransform3D)
 
-    robust_template.connect(inputspec, 'ref',
-                            init_wf, 'image')
+    img = nifti_image_input(image)
+    ref = nifti_image_input(reference)
 
-    robust_template.inputs.inputspec.axis = 4
+    moving = img.get_data()
+    static = ref.get_data()
 
-    robust_template.connect(init_wf, 'output_img',
-                            linear_reg, 'in_file')
+    static_grid2world = img.affine
+    moving_grid2world = ref.affine
 
-    robust_template.connect(inputspec, 'reference_brain',
-                            linear_reg, 'reference')
+    nbins = 32
+    sampling_prop = None
+    metric = MutualInformationMetric(nbins, sampling_prop)
+    level_iters = [10000, 1000, 100]
+    sigmas = [3.0, 1.0, 0.0]
+    factors = [4, 2, 1]
 
-    # robust_template.connect(inputspec, 'interp',
-    #                         linear_reg, 'interp')
+    affreg = AffineRegistration(metric=metric,
+                                level_iters=level_iters,
+                                sigmas=sigmas,
+                                factors=factors)
 
-    robust_template.connect(linear_reg, 'out_matrix_file',
-                            outputspec, 'transform_linear_xfm')
+    transform = TranslationTransform3D()
+    params0 = None
+    starting_affine = init_affine
+    translation = affreg.optimize(static, moving, transform, params0,
+                                  static_grid2world, moving_grid2world,
+                                  starting_affine=starting_affine)
 
-    return robust_template
+    transformed = translation.transform(moving)
+
+    transform = RigidTransform3D()
+    params0 = None
+    starting_affine = translation.affine
+    rigid = affreg.optimize(static, moving, transform, params0,
+                            static_grid2world, moving_grid2world,
+                            starting_affine=starting_affine)
+
+    transformed = rigid.transform(moving)
+
+    transform = AffineTransform3D()
+    params0 = None
+    starting_affine = rigid.affine
+    affine = affreg.optimize(static, moving, transform, params0,
+                             static_grid2world, moving_grid2world,
+                             starting_affine=starting_affine)
+
+    transformed = affine.transform(moving)
+
+    out_image = nib.Nifti1Image(transformed, static_grid2world)
+
+    return out_image
+
+
+
+
+
+def squareNumber(n):
+    return n ** 2
+
+
+# function to be mapped over
+def calculateParallel(numbers, threads=2):
+    pool = ThreadPool(threads)
+    results = pool.map(squareNumber, numbers)
+    pool.close()
+    pool.join()
+    return results
+
+
+if __name__ == "__main__":
+    numbers = [1, 2, 3, 4, 5]
+    squaredNumbers = calculateParallel(numbers, 4)
+    for n in squaredNumbers:
+        print(n)
