@@ -12,6 +12,12 @@ import nipype.interfaces.utility as util
 import nipype.interfaces.fsl as fsl
 from nipype import MapNode
 from CPAC.utils.nifti_utils import nifti_image_input
+from dipy.align.imaffine import (transform_centers_of_mass,
+                                 MutualInformationMetric,
+                                 AffineRegistration)
+from dipy.align.transforms import (TranslationTransform3D,
+                                   RigidTransform3D,
+                                   AffineTransform3D)
 
 
 def read_ants_mat(ants_mat_file):
@@ -410,8 +416,6 @@ def template_creation_loop(img_list, output_folder,
 # as the first step to ensure a minimal alignment between the images
 
 def center_align(image, reference):
-    from dipy.align.imaffine import transform_centers_of_mass
-
     img = nifti_image_input(image)
     ref = nifti_image_input(reference)
 
@@ -429,26 +433,48 @@ def center_align(image, reference):
     return transformed, c_of_mass.affine
 
 
-def affine_registration(image, reference, init_affine, transform_mode='affine'):
-    from dipy.align.imaffine import (transform_centers_of_mass,
-                                     MutualInformationMetric,
-                                     AffineRegistration)
-    from dipy.align.transforms import (TranslationTransform3D,
-                                       RigidTransform3D,
-                                       AffineTransform3D)
+def dipy_registration(image, reference, transform_mode='affine',
+                      init_affine=None,
+                      nbins=32,
+                      sampling_prop=None,
+                      level_iters=[10000, 1000, 100],
+                      sigmas=[3.0, 1.0, 0.0],
+                      factors=[4, 2, 1]):
+    """
 
-    # Maybe I can do something to avoid problems if we add an option 
-    tr_dict = {'c_of_mass': [1, 0, 0, 0],
-               'translation': [1, 1, 0, 0],
-               'rigid': [1, 1, 1, 0],
+    Parameters
+    ----------
+    image
+    reference
+    transform_mode
+    init_affine
+    nbins
+    sampling_prop
+    level_iters
+    sigmas
+    factors
+
+    Returns
+    -------
+    out_image, starting_affine
+    """
+
+    tr_dict = {'c_of_mass': [1],
+               'translation': [1, 1],
+               'rigid': [1, 1, 1],
                'affine': [1, 1, 1, 1]}
     if isinstance(transform_mode, list):
-        if len(transform_mode) == len(tr_dict.keys()):
+        if len(transform_mode) != 0:
             tr_mode = transform_mode
         else:
-            raise ValueError("")
+            raise ValueError("transform_mode is an empty list")
     elif isinstance(transform_mode, six.string_types):
-        tr_mode = tr_dict[transform_mode]
+        if transform_mode in tr_dict.keys():
+            tr_mode = tr_dict[transform_mode]
+        else:
+            raise ValueError(transform_mode + " is not in the possible " +
+                             "transformations, please choose between: " +
+                             str([k for k in tr_dict.keys()]))
     else:
         raise TypeError("transform_mode can be either a string, a list or an " +
                         "int/long")
@@ -458,6 +484,10 @@ def affine_registration(image, reference, init_affine, transform_mode='affine'):
               " (transform_mode == [0, 0, 0, 0])")
         return nifti_image_input(image)
 
+    if init_affine is not None and tr_mode[0]:
+        print("init_affine will be ignored as transform_centers_of_mass " +
+              "doesn't take initial transformation")
+
     img = nifti_image_input(image)
     ref = nifti_image_input(reference)
 
@@ -466,10 +496,11 @@ def affine_registration(image, reference, init_affine, transform_mode='affine'):
 
     static_grid2world = img.affine
     moving_grid2world = ref.affine
-
+    # Used only if transform_centers_of_mass is not used
     starting_affine = init_affine
 
-    if tr_mode[0]:
+    if len(tr_mode) >= len(tr_dict['c_of_mass']) and tr_mode[0]:
+        print("Calculating Center of mass")
         c_of_mass = transform_centers_of_mass(static, static_grid2world,
                                               moving, moving_grid2world)
 
@@ -477,20 +508,18 @@ def affine_registration(image, reference, init_affine, transform_mode='affine'):
 
         transformed = c_of_mass.transform(moving)
 
-    if tr_mode[1] or tr_mode[2] or tr_mode[3]:
-        nbins = 32
-        sampling_prop = None
+    # initialization of the AffineRegistration object used in any of the other
+    # transformation
+    if len(tr_mode) >= len(tr_dict['translation']):
         metric = MutualInformationMetric(nbins, sampling_prop)
-        level_iters = [10000, 1000, 100]
-        sigmas = [3.0, 1.0, 0.0]
-        factors = [4, 2, 1]
 
         affreg = AffineRegistration(metric=metric,
                                     level_iters=level_iters,
                                     sigmas=sigmas,
                                     factors=factors)
 
-    if tr_mode[1]:
+    if len(tr_mode) >= len(tr_dict['translation']) and tr_mode[1]:
+        print("Calculating Translation")
         transform = TranslationTransform3D()
         params0 = None
         translation = affreg.optimize(static, moving, transform, params0,
@@ -499,7 +528,8 @@ def affine_registration(image, reference, init_affine, transform_mode='affine'):
         starting_affine = translation.affine
         transformed = translation.transform(moving)
 
-    if tr_mode[2]:
+    if len(tr_mode) >= len(tr_dict['rigid']) and tr_mode[2]:
+        print("Calculating Rigid")
         transform = RigidTransform3D()
         params0 = None
 
@@ -510,7 +540,8 @@ def affine_registration(image, reference, init_affine, transform_mode='affine'):
 
         transformed = rigid.transform(moving)
 
-    if tr_mode[3]:
+    if len(tr_mode) >= len(tr_dict['affine']) and tr_mode[3]:
+        print("Calculating Affine")
         transform = AffineTransform3D()
         params0 = None
 
@@ -518,11 +549,14 @@ def affine_registration(image, reference, init_affine, transform_mode='affine'):
                                  static_grid2world, moving_grid2world,
                                  starting_affine=starting_affine)
 
+        starting_affine = affine.affine
+
         transformed = affine.transform(moving)
 
+    # Create an image with the transformed data and the affine of the reference
     out_image = nib.Nifti1Image(transformed, static_grid2world)
 
-    return out_image
+    return out_image, starting_affine
 
 
 
@@ -531,6 +565,13 @@ def affine_registration(image, reference, init_affine, transform_mode='affine'):
 def squareNumber(n):
     return n ** 2
 
+
+def calculateParallel(numbers, threads=2):
+    pool = ThreadPool(threads)
+    results = pool.map(squareNumber, numbers)
+    pool.close()
+    pool.join()
+    return results
 
 # function to be mapped over
 def calculateParallel(numbers, threads=2):
