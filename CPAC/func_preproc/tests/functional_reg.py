@@ -4,7 +4,7 @@ import ntpath
 import numpy as np
 import six
 from multiprocessing.dummy import Pool as ThreadPool
-
+from functools import partial
 
 import nibabel as nib
 import nipype.pipeline.engine as pe
@@ -35,17 +35,17 @@ def read_ants_mat(ants_mat_file):
     return translation, oth_transform
 
 
-def read_flirt_mat(flirt_mat):
-    if isinstance(flirt_mat, np.ndarray):
-        mat = flirt_mat
-    elif isinstance(flirt_mat, str):
-        if os.path.exists(flirt_mat):
-            mat = np.loadtxt(flirt_mat)
+def read_mat(input_mat):
+    if isinstance(input_mat, np.ndarray):
+        mat = input_mat
+    elif isinstance(input_mat, str):
+        if os.path.exists(input_mat):
+            mat = np.loadtxt(input_mat)
         else:
-            raise IOError("ERROR norm_transformation: " + flirt_mat +
+            raise IOError("ERROR norm_transformation: " + input_mat +
                           " file does not exist")
     else:
-        raise TypeError("ERROR norm_transformation: flirt_mat should be" +
+        raise TypeError("ERROR norm_transformation: input_mat should be" +
                         " either a str or a numpy.ndarray matrix")
 
     if mat.shape != (4, 4):
@@ -271,7 +271,7 @@ def norm_transformation(flirt_mat):
     Returns
     -------
         numpy.float64
-            squared norm of the translation + squared Frobenium norm of the
+            squared norm of the translation + squared Frobenius norm of the
             difference between other affine transformations and the identity
     """
     if isinstance(flirt_mat, np.ndarray):
@@ -298,7 +298,7 @@ def norm_transformation(flirt_mat):
     return pow(tr_norm, 2) + pow(affine_norm, 2)
 
 
-def template_convergence(mat_file, mat_type='flirt',
+def template_convergence(mat_file, mat_type='matrix',
                          convergence_threshold=np.finfo(np.float64).eps):
     """
 
@@ -307,7 +307,7 @@ def template_convergence(mat_file, mat_type='flirt',
     mat_file: str
         path to an fsl flirt matrix
     mat_type: str
-        'flirt'(default), 'ants'
+        'matrix'(default), 'ITK'
         The type of matrix used to represent the transformations
     convergence_threshold: float
         (numpy.finfo(np.float64).eps (default)) threshold for the convergence
@@ -318,9 +318,9 @@ def template_convergence(mat_file, mat_type='flirt',
     -------
 
     """
-    if mat_type == 'flirt':
-        translation, oth_transform = read_flirt_mat(mat_file)
-    elif mat_type == 'ants':
+    if mat_type == 'matrix':
+        translation, oth_transform = read_mat(mat_file)
+    elif mat_type == 'ITK':
         translation, oth_transform = read_ants_mat(mat_file)
     else:
         raise ValueError("ERROR template_convergence: this matrix type does " +
@@ -330,10 +330,261 @@ def template_convergence(mat_file, mat_type='flirt',
     return abs(distance) <= convergence_threshold
 
 
-def template_creation_loop(img_list, output_folder,
-                           init_reg=MapNode, avg_method='median', dof=12,
-                           interp='trilinear', cost='corratio',
-                           convergence_threshold=np.finfo(np.float64).eps):
+def template_creation_flirt(img_list, output_folder,
+                            init_reg=MapNode, avg_method='median', dof=12,
+                            interp='trilinear', cost='corratio',
+                            mat_type='matrix',
+                            convergence_threshold=np.finfo(np.float64).eps):
+    """
+
+    Parameters
+    ----------
+    img_list: list of str
+        list of images paths
+    output_folder: str
+        path to the output folder (the folder must already exist)
+    init_reg: nipype.MapNode
+        (default None so no initial registration is performed)
+        the output of the function register_img_list with another reference
+        Reuter et al. 2012 (NeuroImage) section "Improved template estimation"
+        doi:10.1016/j.neuroimage.2012.02.084 recommend to use a ramdomly
+        selected image from the input dataset
+    avg_method: str
+        function names from numpy library such as 'median', 'mean', 'std' ...
+    dof: integer (int of long)
+        number of transform degrees of freedom (FLIRT) (12 by default)
+    interp: str
+        ('trilinear' (default) or 'nearestneighbour' or 'sinc' or 'spline')
+        final interpolation method used in reslicing
+    cost: str
+        ('mutualinfo' or 'corratio' (default) or 'normcorr' or 'normmi' or
+         'leastsq' or 'labeldiff' or 'bbr')
+        cost function
+    mat_type: str
+        'matrix'(default), 'ITK'
+        The type of matrix used to represent the transformations
+    convergence_threshold: float
+        (numpy.finfo(np.float64).eps (default)) threshold for the convergence
+        The threshold is how different from no transformation is the
+        transformation matrix.
+
+    Returns
+    -------
+    template: str
+        path to the final template
+
+    """
+    if not img_list:
+        print('ERROR create_temporary_template: image list is empty')
+
+    if init_reg is not None:
+        init_reg.run()
+        image_list = init_reg.inputs.out_file
+        mat_list = init_reg.inputs.out_matrix_file
+        # test if every transformation matrix has reached the convergence
+        convergence_list = [template_convergence(
+            mat, mat_type, convergence_threshold) for mat in mat_list]
+        converged = all(convergence_list)
+    else:
+        image_list = img_list
+        converged = False
+
+    tmp_template = os.path.join(output_folder, 'tmp_template.nii.gz')
+
+    while not converged:
+        tmp_template = create_temporary_template(image_list,
+                                                 out_path=tmp_template,
+                                                 avg_method=avg_method)
+        reg_list_node = register_img_list(image_list,
+                                          ref_img=tmp_template,
+                                          output_folder=output_folder,
+                                          dof=dof,
+                                          interp=interp,
+                                          cost=cost)
+        reg_list_node.run()
+
+        image_list = reg_list_node.inputs.out_file
+        mat_list = reg_list_node.inputs.out_matrix_file
+        # test if every transformation matrix has reached the convergence
+        convergence_list = [template_convergence(
+            mat, mat_type, convergence_threshold) for mat in mat_list]
+        converged = all(convergence_list)
+
+    template = tmp_template
+    return template
+
+
+# multithread + dipy version of the freesurfer longitudinal template creation
+
+# http://nipy.org/dipy/reference/dipy.align.html#dipy.align.imaffine.transform_centers_of_mass
+# as the first step to ensure a minimal alignment between the images
+
+def center_align(image, reference, interp):
+    img = nifti_image_input(image)
+    ref = nifti_image_input(reference)
+
+    moving = img.get_data()
+    static = ref.get_data()
+
+    static_grid2world = img.affine
+    moving_grid2world = ref.affine
+
+    c_of_mass = transform_centers_of_mass(static, static_grid2world,
+                                          moving, moving_grid2world)
+
+    transformed = c_of_mass.transform(moving, interp=interp)
+    
+    return transformed, c_of_mass.affine
+
+
+def dipy_registration(image, reference, transform_mode='affine',
+                      init_affine=None,
+                      interp='linear',
+                      nbins=32,
+                      sampling_prop=None,
+                      level_iters=[10000, 1000, 100],
+                      sigmas=[3.0, 1.0, 0.0],
+                      factors=[4, 2, 1]):
+
+    tr_dict = {'c_of_mass': [1],
+               'translation': [1, 1],
+               'rigid': [1, 1, 1],
+               'affine': [1, 1, 1, 1]}
+    if isinstance(transform_mode, list):
+        if len(transform_mode) != 0:
+            tr_mode = transform_mode
+        else:
+            raise ValueError("transform_mode is an empty list")
+    elif isinstance(transform_mode, six.string_types):
+        if transform_mode in tr_dict.keys():
+            tr_mode = tr_dict[transform_mode]
+        else:
+            raise ValueError(transform_mode + " is not in the possible " +
+                             "transformations, please choose between: " +
+                             str([k for k in tr_dict.keys()]))
+    else:
+        raise TypeError("transform_mode can be either a string, a list or an " +
+                        "int/long")
+
+    if not any(tr_mode):
+        print("affine_registration didn't do anything " +
+              " (transform_mode == [0, 0, 0, 0])")
+        return nifti_image_input(image)
+
+    if init_affine is not None and tr_mode[0]:
+        print("init_affine will be ignored as transform_centers_of_mass " +
+              "doesn't take initial transformation")
+
+    img = nifti_image_input(image)
+    ref = nifti_image_input(reference)
+
+    moving = img.get_data()
+    static = ref.get_data()
+
+    static_grid2world = img.affine
+    moving_grid2world = ref.affine
+    # Used only if transform_centers_of_mass is not used
+    transformation_matrix = init_affine
+
+    if len(tr_mode) >= len(tr_dict['c_of_mass']) and tr_mode[0]:
+        print("Calculating Center of mass")
+        c_of_mass = transform_centers_of_mass(static, static_grid2world,
+                                              moving, moving_grid2world)
+
+        transformation_matrix = c_of_mass.affine
+
+        transformed = c_of_mass.transform(moving, interp=interp)
+
+    # initialization of the AffineRegistration object used in any of the other
+    # transformation
+    if len(tr_mode) >= len(tr_dict['translation']):
+        metric = MutualInformationMetric(nbins, sampling_prop)
+
+        affreg = AffineRegistration(metric=metric,
+                                    level_iters=level_iters,
+                                    sigmas=sigmas,
+                                    factors=factors)
+
+    if len(tr_mode) >= len(tr_dict['translation']) and tr_mode[1]:
+        print("Calculating Translation")
+        transform = TranslationTransform3D()
+        params0 = None
+        translation = affreg.optimize(static, moving, transform, params0,
+                                      static_grid2world, moving_grid2world,
+                                      starting_affine=transformation_matrix)
+        transformation_matrix = translation.affine
+        transformed = translation.transform(moving, interp=interp)
+
+    if len(tr_mode) >= len(tr_dict['rigid']) and tr_mode[2]:
+        print("Calculating Rigid")
+        transform = RigidTransform3D()
+        params0 = None
+
+        rigid = affreg.optimize(static, moving, transform, params0,
+                                static_grid2world, moving_grid2world,
+                                starting_affine=transformation_matrix)
+        transformation_matrix = rigid.affine
+
+        transformed = rigid.transform(moving, interp=interp)
+
+    if len(tr_mode) >= len(tr_dict['affine']) and tr_mode[3]:
+        print("Calculating Affine")
+        transform = AffineTransform3D()
+        params0 = None
+
+        affine = affreg.optimize(static, moving, transform, params0,
+                                 static_grid2world, moving_grid2world,
+                                 starting_affine=transformation_matrix)
+
+        transformation_matrix = affine.affine
+
+        transformed = affine.transform(moving, interp=interp)
+
+    # Create an image with the transformed data and the affine of the reference
+    out_image = nib.Nifti1Image(transformed, static_grid2world)
+
+    return out_image, transformation_matrix
+
+
+def calculate_parallel(img_list, reference,
+                       transform_mode='affine',
+                       init_affine=None,
+                       nbins=32,
+                       sampling_prop=None,
+                       level_iters=[10000, 1000, 100],
+                       sigmas=[3.0, 1.0, 0.0],
+                       factors=[4, 2, 1], threads=2):
+    pool = ThreadPool(threads)
+    tmp_func = partial(dipy_registration,
+                       reference=reference,
+                       transform_mode=transform_mode,
+                       init_affine=init_affine,
+                       nbins=nbins,
+                       sampling_prop=sampling_prop,
+                       level_iters=level_iters,
+                       sigmas=sigmas,
+                       factors=factors)
+
+    results = pool.map(tmp_func, img_list)
+    pool.close()
+    pool.join()
+    # results should be a list of tuples of registered images and their
+    # transformation matrix
+    return results
+
+
+def template_creation_dipy(img_list, output_folder,
+                           transform_mode='affine',
+                           init_affine=None,
+                           nbins=32,
+                           sampling_prop=None,
+                           level_iters=[10000, 1000, 100],
+                           sigmas=[3.0, 1.0, 0.0],
+                           factors=[4, 2, 1],
+                           init_reg=MapNode,
+                           avg_method='median',
+                           convergence_threshold=np.finfo(np.float64).eps,
+                           threads=2):
     """
 
     Parameters
@@ -391,12 +642,15 @@ def template_creation_loop(img_list, output_folder,
         tmp_template = create_temporary_template(image_list,
                                                  out_path=tmp_template,
                                                  avg_method=avg_method)
-        reg_list_node = register_img_list(image_list,
-                                          ref_img=tmp_template,
-                                          output_folder=output_folder,
-                                          dof=dof,
-                                          interp=interp,
-                                          cost=cost)
+        reg_list_node = calculate_parallel(img_list,
+                                           reference=tmp_template,
+                                           transform_mode=transform_mode,
+                                           init_affine=init_affine,
+                                           nbins=nbins,
+                                           sampling_prop=sampling_prop,
+                                           level_iters=level_iters,
+                                           sigmas=sigmas,
+                                           factors=factors, threads=threads)
         reg_list_node.run()
 
         image_list = reg_list_node.inputs.out_file
@@ -408,182 +662,3 @@ def template_creation_loop(img_list, output_folder,
 
     template = tmp_template
     return template
-
-
-# multithread + dipy version of the freesurfer longitudinal template creation
-
-# http://nipy.org/dipy/reference/dipy.align.html#dipy.align.imaffine.transform_centers_of_mass
-# as the first step to ensure a minimal alignment between the images
-
-def center_align(image, reference):
-    img = nifti_image_input(image)
-    ref = nifti_image_input(reference)
-
-    moving = img.get_data()
-    static = ref.get_data()
-
-    static_grid2world = img.affine
-    moving_grid2world = ref.affine
-
-    c_of_mass = transform_centers_of_mass(static, static_grid2world,
-                                          moving, moving_grid2world)
-
-    transformed = c_of_mass.transform(moving)
-    
-    return transformed, c_of_mass.affine
-
-
-def dipy_registration(image, reference, transform_mode='affine',
-                      init_affine=None,
-                      nbins=32,
-                      sampling_prop=None,
-                      level_iters=[10000, 1000, 100],
-                      sigmas=[3.0, 1.0, 0.0],
-                      factors=[4, 2, 1]):
-    """
-
-    Parameters
-    ----------
-    image
-    reference
-    transform_mode
-    init_affine
-    nbins
-    sampling_prop
-    level_iters
-    sigmas
-    factors
-
-    Returns
-    -------
-    out_image, starting_affine
-    """
-
-    tr_dict = {'c_of_mass': [1],
-               'translation': [1, 1],
-               'rigid': [1, 1, 1],
-               'affine': [1, 1, 1, 1]}
-    if isinstance(transform_mode, list):
-        if len(transform_mode) != 0:
-            tr_mode = transform_mode
-        else:
-            raise ValueError("transform_mode is an empty list")
-    elif isinstance(transform_mode, six.string_types):
-        if transform_mode in tr_dict.keys():
-            tr_mode = tr_dict[transform_mode]
-        else:
-            raise ValueError(transform_mode + " is not in the possible " +
-                             "transformations, please choose between: " +
-                             str([k for k in tr_dict.keys()]))
-    else:
-        raise TypeError("transform_mode can be either a string, a list or an " +
-                        "int/long")
-
-    if not any(tr_mode):
-        print("affine_registration didn't do anything " +
-              " (transform_mode == [0, 0, 0, 0])")
-        return nifti_image_input(image)
-
-    if init_affine is not None and tr_mode[0]:
-        print("init_affine will be ignored as transform_centers_of_mass " +
-              "doesn't take initial transformation")
-
-    img = nifti_image_input(image)
-    ref = nifti_image_input(reference)
-
-    moving = img.get_data()
-    static = ref.get_data()
-
-    static_grid2world = img.affine
-    moving_grid2world = ref.affine
-    # Used only if transform_centers_of_mass is not used
-    starting_affine = init_affine
-
-    if len(tr_mode) >= len(tr_dict['c_of_mass']) and tr_mode[0]:
-        print("Calculating Center of mass")
-        c_of_mass = transform_centers_of_mass(static, static_grid2world,
-                                              moving, moving_grid2world)
-
-        starting_affine = c_of_mass.affine
-
-        transformed = c_of_mass.transform(moving)
-
-    # initialization of the AffineRegistration object used in any of the other
-    # transformation
-    if len(tr_mode) >= len(tr_dict['translation']):
-        metric = MutualInformationMetric(nbins, sampling_prop)
-
-        affreg = AffineRegistration(metric=metric,
-                                    level_iters=level_iters,
-                                    sigmas=sigmas,
-                                    factors=factors)
-
-    if len(tr_mode) >= len(tr_dict['translation']) and tr_mode[1]:
-        print("Calculating Translation")
-        transform = TranslationTransform3D()
-        params0 = None
-        translation = affreg.optimize(static, moving, transform, params0,
-                                      static_grid2world, moving_grid2world,
-                                      starting_affine=starting_affine)
-        starting_affine = translation.affine
-        transformed = translation.transform(moving)
-
-    if len(tr_mode) >= len(tr_dict['rigid']) and tr_mode[2]:
-        print("Calculating Rigid")
-        transform = RigidTransform3D()
-        params0 = None
-
-        rigid = affreg.optimize(static, moving, transform, params0,
-                                static_grid2world, moving_grid2world,
-                                starting_affine=starting_affine)
-        starting_affine = rigid.affine
-
-        transformed = rigid.transform(moving)
-
-    if len(tr_mode) >= len(tr_dict['affine']) and tr_mode[3]:
-        print("Calculating Affine")
-        transform = AffineTransform3D()
-        params0 = None
-
-        affine = affreg.optimize(static, moving, transform, params0,
-                                 static_grid2world, moving_grid2world,
-                                 starting_affine=starting_affine)
-
-        starting_affine = affine.affine
-
-        transformed = affine.transform(moving)
-
-    # Create an image with the transformed data and the affine of the reference
-    out_image = nib.Nifti1Image(transformed, static_grid2world)
-
-    return out_image, starting_affine
-
-
-
-
-
-def squareNumber(n):
-    return n ** 2
-
-
-def calculateParallel(numbers, threads=2):
-    pool = ThreadPool(threads)
-    results = pool.map(squareNumber, numbers)
-    pool.close()
-    pool.join()
-    return results
-
-# function to be mapped over
-def calculateParallel(numbers, threads=2):
-    pool = ThreadPool(threads)
-    results = pool.map(squareNumber, numbers)
-    pool.close()
-    pool.join()
-    return results
-
-
-if __name__ == "__main__":
-    numbers = [1, 2, 3, 4, 5]
-    squaredNumbers = calculateParallel(numbers, 4)
-    for n in squaredNumbers:
-        print(n)
