@@ -97,22 +97,29 @@ RUN libs_path=/usr/lib/x86_64-linux-gnu && \
 # set up AFNI
 ENV PATH=/opt/afni:$PATH
 
+
 # install FSL
-RUN apt-get update  && \
-    apt-get install -y --no-install-recommends \
-                    fsl-core \
-                    fsl-atlases \
-                    fsl-mni152-templates
+# RUN apt-get update  && \
+#     apt-get install -y --no-install-recommends \
+#                     fsl-core \
+#                     fsl-atlases \
+#                     fsl-mni152-templates
+
+COPY fslinstaller.py /tmp
+RUN mkdir -p /usr/share/fsl && \
+      python /tmp/fslinstaller.py -d /usr/share/fsl/6.0 -E
+
 
 # setup FSL environment
-ENV FSLDIR=/usr/share/fsl/5.0 \
+ENV FSLDIR=/usr/share/fsl/6.0 \
     FSLOUTPUTTYPE=NIFTI_GZ \
     FSLMULTIFILEQUIT=TRUE \
-    POSSUMDIR=/usr/share/fsl/5.0 \
-    LD_LIBRARY_PATH=/usr/lib/fsl/5.0:$LD_LIBRARY_PATH \
-    FSLTCLSH=/usr/bin/tclsh \
+    POSSUMDIR=/usr/share/fsl/6.0 \
+    LD_LIBRARY_PATH=/usr/share/fsl/6.0:$LD_LIBRARY_PATH \
+    FSLTCLSH=/usr/bin/tclsh8.6 \
     FSLWISH=/usr/bin/wish \
-    PATH=/usr/lib/fsl/5.0:$PATH
+    PATH=/usr/share/fsl/6.0/bin:$PATH
+
 
 # install CPAC resources into FSL
 RUN cd /tmp && \
