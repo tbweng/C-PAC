@@ -424,6 +424,31 @@ def bids_gen_cpac_sublist(bids_dir, paths_list, config_dict, creds_path, dbg=Fal
                                task_key,
                                p))
 
+            if "asl" in f_dict["scantype"]:
+                task_key = f_dict["task"]
+                if "run" in f_dict:
+                    task_key = "_".join([task_key,
+                                         "-".join(["run", f_dict["run"]])])
+                if "acq" in f_dict:
+                    task_key = "_".join([task_key,
+                                         "-".join(["acq", f_dict["acq"]])])
+                if "func" not in subdict[f_dict["sub"]][f_dict["ses"]]:
+                    subdict[f_dict["sub"]][f_dict["ses"]]["func"] = {}
+
+                if task_key not in \
+                        subdict[f_dict["sub"]][f_dict["ses"]]["func"]:
+
+                    subdict[f_dict["sub"]][f_dict["ses"]]["func"][task_key] = task_info
+
+                else:
+                    print("Func file (%s)" %
+                          subdict[f_dict["sub"]][f_dict["ses"]]["func"][task_key] +
+                          " already found for ( % s: %s: % s) discarding % s" % (
+                              f_dict["sub"],
+                              f_dict["ses"],
+                              task_key,
+                              p))
+
     sublist = []
     for ksub, sub in subdict.iteritems():
         for kses, ses in sub.iteritems():
@@ -494,12 +519,12 @@ def collect_bids_files_configs(bids_dir, aws_input_creds=''):
                 file_paths += [os.path.join(root, f).replace(bids_dir,'')
                                    .lstrip('/')
                                for f in files
-                               if 'nii' in f and ('T1w' in f or 'bold' in f)]
+                               if 'nii' in f and ('T1w' in f or 'bold' in f or 'asl' in f)]
                 config_dict.update(
                     {os.path.join(root.replace(bids_dir, '').lstrip('/'), f):
                          json.load(open(os.path.join(root, f), 'r'))
                      for f in files
-                     if f.endswith('json') and ('T1w' in f or 'bold' in f)})
+                     if f.endswith('json') and ('T1w' in f or 'bold' in f or 'asl' in f)})
 
     if not file_paths and not config_dict:
         raise IOError("Didn't find any files in %s. Please verify that the"
