@@ -11,8 +11,7 @@ def nifti_image_input(image):
     Parameters
     ----------
     image: str or nibabel.nifti1.Nifti1Image
-        path to the nifti file to be inverted or
-        the image already loaded through nibabel
+        path to the nifti file or the image already loaded through nibabel
 
     Returns
     -------

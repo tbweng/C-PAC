@@ -257,16 +257,15 @@ def norm_transformations(translation, oth_transform):
     return pow(tr_norm, 2) + pow(affine_norm, 2)
 
 
-def norm_transformation(flirt_mat):
+def norm_transformation(input_mat):
     """
     Calculate the squared norm of the translation + squared Frobenium norm
     of the difference between other affine transformations and the identity
     from an fsl FLIRT transformation matrix
     Parameters
     ----------
-    flirt_mat: str or numpy.ndarray
-        Either the path to an fsl flirt matrix or an flirt matrix already
-        imported.
+    input_mat: str or numpy.ndarray
+        Either the path to text file matrix or a matrix already imported.
 
     Returns
     -------
@@ -274,17 +273,17 @@ def norm_transformation(flirt_mat):
             squared norm of the translation + squared Frobenius norm of the
             difference between other affine transformations and the identity
     """
-    if isinstance(flirt_mat, np.ndarray):
-        mat = flirt_mat
-    elif isinstance(flirt_mat, str):
-        if os.path.exists(flirt_mat):
-            mat = np.loadtxt(flirt_mat)
+    if isinstance(input_mat, np.ndarray):
+        mat = input_mat
+    elif isinstance(input_mat, str):
+        if os.path.exists(input_mat):
+            mat = np.loadtxt(input_mat)
         else:
-            raise IOError("ERROR norm_transformation: " + flirt_mat +
+            raise IOError("ERROR norm_transformation: " + input_mat +
                           " file does not exist")
     else:
-        raise TypeError("ERROR norm_transformation: flirt_mat should be" +
-                        " either a str or a numpy.ndarray matrix")
+        raise TypeError("ERROR norm_transformation: input_mat should be" +
+                        " either a str (file_path) or a numpy.ndarray matrix")
 
     if mat.shape != (4, 4):
         raise ValueError("ERROR norm_transformation: the matrix should be 4x4")
@@ -301,7 +300,8 @@ def norm_transformation(flirt_mat):
 def template_convergence(mat_file, mat_type='matrix',
                          convergence_threshold=np.finfo(np.float64).eps):
     """
-
+    Calculate the distance between transformation matrix with a matrix of no
+    transformation
     Parameters
     ----------
     mat_file: str
@@ -445,6 +445,77 @@ def dipy_registration(image, reference, transform_mode='affine',
                       level_iters=[10000, 1000, 100],
                       sigmas=[3.0, 1.0, 0.0],
                       factors=[4, 2, 1]):
+    """
+    Calculate and apply the transformations to register a given image to a
+    reference image using the dipy.align.imaffine functions.
+    Parameters
+    ----------
+    image: str or nibabel.nifti1.Nifti1Image
+        path to the nifti file or the image already loaded through nibabel to
+        be registered to the reference image
+    reference: str or nibabel.nifti1.Nifti1Image
+        path to the nifti file or the image already loaded through nibabel to
+        which the image will be registered
+    init_affine : array, shape (dim+1, dim+1), optional
+        the pre-aligning matrix (an affine transform) that roughly aligns
+        the moving image towards the static image. If None, no
+        pre-alignment is performed. If a pre-alignment matrix is available,
+        it is recommended to provide this matrix as `starting_affine`
+        instead of manually transforming the moving image to reduce
+        interpolation artifacts. The default is None, implying no
+        pre-alignment is performed.
+    interp : string, either 'linear' or 'nearest'
+        the type of interpolation to be used, either 'linear'
+        (for k-linear interpolation) or 'nearest' for nearest neighbor
+    transform_mode: str or list of int or boolean, optional
+        the different transformations to be used to register the images.
+        "c_of_mass" will only align the images on the centers of mass
+        "translation" will first align the centers of mass and then calculate
+        the translation needed to register the images
+        "rigid" does the two first calculations and then the rigid
+        transformations.
+        "affine" does the three precedent calculations and then calculate the
+        affine transformations to register the images.
+        You can also provide a list of int or boolean to select which
+        transformations will be calculated for the registration.
+        [0,1,1,0] or [0,1,1] will only calculate the translation and rigid
+        transformation and skip the center of mass alignment and affine.
+        'c_of_mass': [1],
+        'translation': [1, 1],
+        'rigid': [1, 1, 1],
+        'affine': [1, 1, 1, 1]
+    nbins : int, optional
+        the number of bins to be used for computing the intensity
+        histograms. The default is 32.
+    sampling_prop: None or float in interval (0, 1], optional
+        There are two types of sampling: dense and sparse. Dense sampling
+        uses all voxels for estimating the (joint and marginal) intensity
+        histograms, while sparse sampling uses a subset of them. If
+        `sampling_proportion` is None, then dense sampling is
+        used. If `sampling_proportion` is a floating point value in (0,1]
+        then sparse sampling is used, where `sampling_proportion`
+        specifies the proportion of voxels to be used. The default is
+        None.
+    level_iters : sequence, optional
+        the number of iterations at each scale of the scale space.
+        `level_iters[0]` corresponds to the coarsest scale,
+        `level_iters[-1]` the finest, where n is the length of the
+        sequence. By default, a 3-level scale space with iterations
+        sequence equal to [10000, 1000, 100] will be used.
+    sigmas : sequence of floats, optional
+        custom smoothing parameter to build the scale space (one parameter
+        for each scale). By default, the sequence of sigmas will be
+        [3, 1, 0].
+    factors : sequence of floats, optional
+        custom scale factors to build the scale space (one factor for each
+        scale). By default, the sequence of factors will be [4, 2, 1].
+
+    Returns
+    -------
+    out_image, transformation_matrix: nibabel.Nifti1Image, 4x4 numpy.array
+        the image registered to the reference, the transformation matrix of
+        the registration
+    """
 
     tr_dict = {'c_of_mass': [1],
                'translation': [1, 1],
@@ -467,9 +538,9 @@ def dipy_registration(image, reference, transform_mode='affine',
                         "int/long")
 
     if not any(tr_mode):
-        print("affine_registration didn't do anything " +
+        print("dipy_registration didn't do anything " +
               " (transform_mode == [0, 0, 0, 0])")
-        return nifti_image_input(image)
+        return nifti_image_input(image), np.eye(4, 4)
 
     if init_affine is not None and tr_mode[0]:
         print("init_affine will be ignored as transform_centers_of_mass " +
@@ -546,26 +617,110 @@ def dipy_registration(image, reference, transform_mode='affine',
     return out_image, transformation_matrix
 
 
-def calculate_parallel(img_list, reference,
-                       transform_mode='affine',
-                       init_affine=None,
-                       nbins=32,
-                       sampling_prop=None,
-                       level_iters=[10000, 1000, 100],
-                       sigmas=[3.0, 1.0, 0.0],
-                       factors=[4, 2, 1], threads=2):
+def parallel_dipy_list_reg(img_list, reference,
+                           transform_mode='affine',
+                           init_affine_list=None,
+                           nbins=32,
+                           sampling_prop=None,
+                           level_iters=[10000, 1000, 100],
+                           sigmas=[3.0, 1.0, 0.0],
+                           factors=[4, 2, 1], threads=2):
+    """
+    Register a list of images to a reference image using the
+    dipy.align.imaffine functions
+    Parameters
+    ----------
+    img_list: list of str or list of nibabel.Nifti1Image
+        list of images to be registered
+    reference: str or nibabel.nifti1.Nifti1Image
+        path to the nifti file or the image already loaded through nibabel to
+        which the image will be registered
+    transform_mode: str or list of int or boolean, optional
+        the different transformations to be used to register the images.
+        "c_of_mass" will only align the images on the centers of mass
+        "translation" will first align the centers of mass and then calculate
+        the translation needed to register the images
+        "rigid" does the two first calculations and then the rigid
+        transformations.
+        "affine" does the three precedent calculations and then calculate the
+        affine transformations to register the images.
+        You can also provide a list of int or boolean to select which
+        transformations will be calculated for the registration.
+        [0,1,1,0] or [0,1,1] will only calculate the translation and rigid
+        transformation and skip the center of mass alignment and affine.
+    init_affine_list : list of arrays, optional
+        the pre-aligning matrix (an affine transform) that roughly aligns
+        the moving image towards the static image. If None, no
+        pre-alignment is performed. If a pre-alignment matrix is available,
+        it is recommended to provide this matrix as `starting_affine`
+        instead of manually transforming the moving image to reduce
+        interpolation artifacts. The default is None, implying no
+        pre-alignment is performed.
+    nbins : int, optional
+        the number of bins to be used for computing the intensity
+        histograms. The default is 32.
+    sampling_prop: None or float in interval (0, 1], optional
+        There are two types of sampling: dense and sparse. Dense sampling
+        uses all voxels for estimating the (joint and marginal) intensity
+        histograms, while sparse sampling uses a subset of them. If
+        `sampling_proportion` is None, then dense sampling is
+        used. If `sampling_proportion` is a floating point value in (0,1]
+        then sparse sampling is used, where `sampling_proportion`
+        specifies the proportion of voxels to be used. The default is
+        None.
+    level_iters : sequence, optional
+        the number of iterations at each scale of the scale space.
+        `level_iters[0]` corresponds to the coarsest scale,
+        `level_iters[-1]` the finest, where n is the length of the
+        sequence. By default, a 3-level scale space with iterations
+        sequence equal to [10000, 1000, 100] will be used.
+    sigmas : sequence of floats, optional
+        custom smoothing parameter to build the scale space (one parameter
+        for each scale). By default, the sequence of sigmas will be
+        [3, 1, 0].
+    factors : sequence of floats, optional
+        custom scale factors to build the scale space (one factor for each
+        scale). By default, the sequence of factors will be [4, 2, 1].
+    threads: int
+        (default 2) number of threads
+
+    Returns
+    -------
+    results: list of (out_image, transformation_matrix)
+        nibabel.Nifti1Image, 4x4 numpy.array
+        the images registered to the reference, the transformation matrices of
+        the registrations
+    """
+
     pool = ThreadPool(threads)
-    tmp_func = partial(dipy_registration,
-                       reference=reference,
-                       transform_mode=transform_mode,
-                       init_affine=init_affine,
+
+    if init_affine_list is not None:
+        if len(init_affine_list) != len(img_list):
+            raise ValueError("The list of images and affine matrices don't " +
+                             "have the same size")
+        temp = partial(dipy_registration,
                        nbins=nbins,
                        sampling_prop=sampling_prop,
                        level_iters=level_iters,
                        sigmas=sigmas,
                        factors=factors)
-
-    results = pool.map(tmp_func, img_list)
+        img_num = len(img_list)
+        list_args = zip(img_list,
+                        [reference] * img_num,
+                        [transform_mode] * img_num,
+                        init_affine_list)
+        results = pool.starmap(temp, list_args)
+    else:
+        temp = partial(dipy_registration,
+                       reference=reference,
+                       transform_mode=transform_mode,
+                       init_affine_list=init_affine_list,
+                       nbins=nbins,
+                       sampling_prop=sampling_prop,
+                       level_iters=level_iters,
+                       sigmas=sigmas,
+                       factors=factors)
+        results = pool.map(temp, img_list)
     pool.close()
     pool.join()
     # results should be a list of tuples of registered images and their
@@ -574,67 +729,94 @@ def calculate_parallel(img_list, reference,
 
 
 def template_creation_dipy(img_list, output_folder,
+                           avg_method='median',
                            transform_mode='affine',
-                           init_affine=None,
                            nbins=32,
                            sampling_prop=None,
                            level_iters=[10000, 1000, 100],
                            sigmas=[3.0, 1.0, 0.0],
                            factors=[4, 2, 1],
-                           init_reg=MapNode,
-                           avg_method='median',
                            convergence_threshold=np.finfo(np.float64).eps,
                            threads=2):
     """
-
+    Use the Reuter et al. 2012 (NeuroImage) doi:10.1016/j.neuroimage.2012.02.084
+    principle to calculate a template of longitudinal data. The average of the
+    image list is calculated and then each image is registered to this image.
+    This process is repeated on the registered images until the distance between
+    the transformations and no transformation is smaller than the convergence
+    threshold.
     Parameters
     ----------
-    img_list: list of str
-        list of images paths
+    img_list: list of str or list of nibabel.Nifti1Image
+        list of images to be registered
     output_folder: str
         path to the output folder (the folder must already exist)
-    init_reg: nipype.MapNode
-        (default None so no initial registration is performed)
-        the output of the function register_img_list with another reference
-        Reuter et al. 2012 (NeuroImage) section "Improved template estimation"
-        doi:10.1016/j.neuroimage.2012.02.084 recommend to use a ramdomly
-        selected image from the input dataset
-    avg_method: str
+    avg_method: str, optional
         function names from numpy library such as 'median', 'mean', 'std' ...
-    dof: integer (int of long)
-        number of transform degrees of freedom (FLIRT) (12 by default)
-    interp: str
-        ('trilinear' (default) or 'nearestneighbour' or 'sinc' or 'spline')
-        final interpolation method used in reslicing
-    cost: str
-        ('mutualinfo' or 'corratio' (default) or 'normcorr' or 'normmi' or
-         'leastsq' or 'labeldiff' or 'bbr')
-        cost function
+    transform_mode: str or list of int or boolean, optional
+        the different transformations to be used to register the images.
+        "c_of_mass" will only align the images on the centers of mass
+        "translation" will first align the centers of mass and then calculate
+        the translation needed to register the images
+        "rigid" does the two first calculations and then the rigid
+        transformations.
+        "affine" does the three precedent calculations and then calculate the
+        affine transformations to register the images.
+        You can also provide a list of int or boolean to select which
+        transformations will be calculated for the registration.
+        [0,1,1,0] or [0,1,1] will only calculate the translation and rigid
+        transformation and skip the center of mass alignment and affine.
+    nbins : int, optional
+        the number of bins to be used for computing the intensity
+        histograms. The default is 32.
+    sampling_prop: None or float in interval (0, 1], optional
+        There are two types of sampling: dense and sparse. Dense sampling
+        uses all voxels for estimating the (joint and marginal) intensity
+        histograms, while sparse sampling uses a subset of them. If
+        `sampling_proportion` is None, then dense sampling is
+        used. If `sampling_proportion` is a floating point value in (0,1]
+        then sparse sampling is used, where `sampling_proportion`
+        specifies the proportion of voxels to be used. The default is
+        None.
+    level_iters : sequence, optional
+        the number of iterations at each scale of the scale space.
+        `level_iters[0]` corresponds to the coarsest scale,
+        `level_iters[-1]` the finest, where n is the length of the
+        sequence. By default, a 3-level scale space with iterations
+        sequence equal to [10000, 1000, 100] will be used.
+    sigmas : sequence of floats, optional
+        custom smoothing parameter to build the scale space (one parameter
+        for each scale). By default, the sequence of sigmas will be
+        [3, 1, 0].
+    factors : sequence of floats, optional
+        custom scale factors to build the scale space (one factor for each
+        scale). By default, the sequence of factors will be [4, 2, 1].
     convergence_threshold: float
         (numpy.finfo(np.float64).eps (default)) threshold for the convergence
         The threshold is how different from no transformation is the
         transformation matrix.
+    threads: int
+        (default 2) number of threads
 
     Returns
     -------
     template: str
         path to the final template
 
+    Notes
+    -----
+    The function can be initialized with a list of images already transformed.
+    For example, we could register the images to a randomly selected image from
+    the original dataset to speed up the process as suggested in
+    Reuter et al. 2012 (NeuroImage) section "Improved template estimation"
+    doi:10.1016/j.neuroimage.2012.02.084
+
     """
     if not img_list:
         print('ERROR create_temporary_template: image list is empty')
 
-    if init_reg is not None:
-        init_reg.run()
-        image_list = init_reg.inputs.out_file
-        mat_list = init_reg.inputs.out_matrix_file
-        # test if every transformation matrix has reached the convergence
-        convergence_list = [template_convergence(
-            mat, 'flirt', convergence_threshold) for mat in mat_list]
-        converged = all(convergence_list)
-    else:
-        image_list = img_list
-        converged = False
+    image_list = img_list
+    converged = False
 
     tmp_template = os.path.join(output_folder, 'tmp_template.nii.gz')
 
@@ -642,23 +824,61 @@ def template_creation_dipy(img_list, output_folder,
         tmp_template = create_temporary_template(image_list,
                                                  out_path=tmp_template,
                                                  avg_method=avg_method)
-        reg_list_node = calculate_parallel(img_list,
-                                           reference=tmp_template,
-                                           transform_mode=transform_mode,
-                                           init_affine=init_affine,
-                                           nbins=nbins,
-                                           sampling_prop=sampling_prop,
-                                           level_iters=level_iters,
-                                           sigmas=sigmas,
-                                           factors=factors, threads=threads)
+        reg_list_node = parallel_dipy_list_reg(img_list,
+                                               reference=tmp_template,
+                                               transform_mode=transform_mode,
+                                               init_affine_list=None,
+                                               nbins=nbins,
+                                               sampling_prop=sampling_prop,
+                                               level_iters=level_iters,
+                                               sigmas=sigmas,
+                                               factors=factors, threads=threads)
         reg_list_node.run()
 
         image_list = reg_list_node.inputs.out_file
         mat_list = reg_list_node.inputs.out_matrix_file
         # test if every transformation matrix has reached the convergence
         convergence_list = [template_convergence(
-            mat, 'flirt', convergence_threshold) for mat in mat_list]
+            mat, 'matrix', convergence_threshold) for mat in mat_list]
         converged = all(convergence_list)
 
     template = tmp_template
     return template
+
+# def wrapper_dipy(**kwargs):
+#     tmp_func = partial(dipy_registration,
+#                        reference=reference,
+#                        transform_mode=transform_mode,
+#                        nbins=nbins,
+#                        sampling_prop=sampling_prop,
+#                        level_iters=level_iters,
+#                        sigmas=sigmas,
+#                        factors=factors)
+#
+# def aff(a, x, b=0):
+#      return a * x + b
+#
+# def temp_aff(a, b, x=1):
+#     return aff(a, x, b)
+#
+# p = partial(temp_aff, x=2)
+#
+# yargs = [(1, 2), (2, 3), (3, 4)]
+#
+# pool = ThreadPool(2)
+# results = pool.starmap(p, yargs)
+# pool.close()
+# pool.join()
+#
+# def wrap_aff(f, x):
+#     return partial(f, x=x)
+#
+# def unwrap(func, d):
+#     return func(**d)
+#
+# t = partial(unwrap(wrap_aff(aff, 2)))
+#
+# tt = partial(unwrap, partial(aff, a=2, b=3))
+# tt = partial(unwrap, partial(aff, x=3))
+#
+# tt({'x': 2})
