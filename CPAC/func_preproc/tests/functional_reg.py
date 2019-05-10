@@ -803,8 +803,10 @@ def template_creation_dipy(img_list, output_folder,
     -----
     The function can be initialized with a list of images already transformed.
     """
+    if not isinstance(img_list, (list,np.ndarray)):
+        raise TypeError("img_list is not a list or a numpy array")
     if not img_list:
-        print('ERROR create_temporary_template: image list is empty')
+        raise ValueError('img_list is empty')
 
     converged = False
 
@@ -814,16 +816,16 @@ def template_creation_dipy(img_list, output_folder,
     # average. As this is only a translation, the reference image for the
     # center of mass is the first image of the list.
 
+    index = random.randrange(len(img_list))
+
     center_align = parallel_dipy_list_reg(img_list,
                                           interp=interp,
-                                          reference=img_list[0],
+                                          reference=img_list[index],
                                           transform_mode='c_of_mass')
 
     image_list = [res[0] for res in center_align]
 
     if init_method == 'random_image':
-
-        index = random.randrange(len(image_list))
 
         res_list_reg = parallel_dipy_list_reg(img_list,
                                               reference=image_list[index],
