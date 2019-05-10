@@ -5,6 +5,7 @@ import numpy as np
 import six
 from multiprocessing.dummy import Pool as ThreadPool
 from functools import partial
+import random
 
 import nibabel as nib
 import nipype.pipeline.engine as pe
@@ -177,9 +178,9 @@ def create_temporary_template(img_list, out_path, avg_method='median'):
         return img_list[0]
 
     avg_data = getattr(np, avg_method)(
-        np.asarray([nib.load(img).get_data() for img in img_list]), 0)
+        np.asarray([nifti_image_input(img).get_data() for img in img_list]), 0)
 
-    nii = nib.Nifti1Image(avg_data, nib.load(img_list[0]).affine)
+    nii = nib.Nifti1Image(avg_data, nifti_image_input(img_list[0]).affine)
     nib.save(nii, out_path)
     return out_path
 
@@ -414,29 +415,6 @@ def template_creation_flirt(img_list, output_folder,
     return template
 
 
-# multithread + dipy version of the freesurfer longitudinal template creation
-
-# http://nipy.org/dipy/reference/dipy.align.html#dipy.align.imaffine.transform_centers_of_mass
-# as the first step to ensure a minimal alignment between the images
-
-def center_align(image, reference, interp):
-    img = nifti_image_input(image)
-    ref = nifti_image_input(reference)
-
-    moving = img.get_data()
-    static = ref.get_data()
-
-    static_grid2world = img.affine
-    moving_grid2world = ref.affine
-
-    c_of_mass = transform_centers_of_mass(static, static_grid2world,
-                                          moving, moving_grid2world)
-
-    transformed = c_of_mass.transform(moving, interp=interp)
-    
-    return transformed, c_of_mass.affine
-
-
 def dipy_registration(image, reference, transform_mode='affine',
                       init_affine=None,
                       interp='linear',
@@ -448,6 +426,7 @@ def dipy_registration(image, reference, transform_mode='affine',
     """
     Calculate and apply the transformations to register a given image to a
     reference image using the dipy.align.imaffine functions.
+    Ref: https://github.com/nipy/dipy/blob/master/dipy/align/imaffine.py
     Parameters
     ----------
     image: str or nibabel.nifti1.Nifti1Image
@@ -620,6 +599,7 @@ def dipy_registration(image, reference, transform_mode='affine',
 def parallel_dipy_list_reg(img_list, reference,
                            transform_mode='affine',
                            init_affine_list=None,
+                           interp='linear',
                            nbins=32,
                            sampling_prop=None,
                            level_iters=[10000, 1000, 100],
@@ -656,6 +636,9 @@ def parallel_dipy_list_reg(img_list, reference,
         instead of manually transforming the moving image to reduce
         interpolation artifacts. The default is None, implying no
         pre-alignment is performed.
+    interp : string, either 'linear' or 'nearest'
+        the type of interpolation to be used, either 'linear'
+        (for k-linear interpolation) or 'nearest' for nearest neighbor
     nbins : int, optional
         the number of bins to be used for computing the intensity
         histograms. The default is 32.
@@ -699,6 +682,7 @@ def parallel_dipy_list_reg(img_list, reference,
             raise ValueError("The list of images and affine matrices don't " +
                              "have the same size")
         temp = partial(dipy_registration,
+                       interp=interp,
                        nbins=nbins,
                        sampling_prop=sampling_prop,
                        level_iters=level_iters,
@@ -714,7 +698,8 @@ def parallel_dipy_list_reg(img_list, reference,
         temp = partial(dipy_registration,
                        reference=reference,
                        transform_mode=transform_mode,
-                       init_affine_list=init_affine_list,
+                       init_affine=init_affine_list,
+                       interp=interp,
                        nbins=nbins,
                        sampling_prop=sampling_prop,
                        level_iters=level_iters,
@@ -731,6 +716,8 @@ def parallel_dipy_list_reg(img_list, reference,
 def template_creation_dipy(img_list, output_folder,
                            avg_method='median',
                            transform_mode='affine',
+                           interp='linear',
+                           init_method='random_image',
                            nbins=32,
                            sampling_prop=None,
                            level_iters=[10000, 1000, 100],
@@ -766,6 +753,15 @@ def template_creation_dipy(img_list, output_folder,
         transformations will be calculated for the registration.
         [0,1,1,0] or [0,1,1] will only calculate the translation and rigid
         transformation and skip the center of mass alignment and affine.
+    interp : string, either 'linear' or 'nearest', optional
+        the type of interpolation to be used, either 'linear'
+        (for k-linear interpolation) or 'nearest' for nearest neighbor
+    init_method: str, 'random_image' (default), 'None' or None optional
+        Method used to initialize the template creation.
+        'random_image' will register the images to a randomly selected image
+        from the original dataset to speed up the process as suggested in
+        Reuter et al. 2012 (NeuroImage) section "Improved template estimation"
+        doi:10.1016/j.neuroimage.2012.02.084
     nbins : int, optional
         the number of bins to be used for computing the intensity
         histograms. The default is 32.
@@ -806,37 +802,56 @@ def template_creation_dipy(img_list, output_folder,
     Notes
     -----
     The function can be initialized with a list of images already transformed.
-    For example, we could register the images to a randomly selected image from
-    the original dataset to speed up the process as suggested in
-    Reuter et al. 2012 (NeuroImage) section "Improved template estimation"
-    doi:10.1016/j.neuroimage.2012.02.084
-
     """
     if not img_list:
         print('ERROR create_temporary_template: image list is empty')
 
-    image_list = img_list
     converged = False
 
     tmp_template = os.path.join(output_folder, 'tmp_template.nii.gz')
+
+    # First align the center of mass of the images together before the first
+    # average. As this is only a translation, the reference image for the
+    # center of mass is the first image of the list.
+
+    center_align = parallel_dipy_list_reg(img_list,
+                                          interp=interp,
+                                          reference=img_list[0],
+                                          transform_mode='c_of_mass')
+
+    image_list = [res[0] for res in center_align]
+
+    if init_method == 'random_image':
+
+        index = random.randrange(len(image_list))
+
+        res_list_reg = parallel_dipy_list_reg(img_list,
+                                              reference=image_list[index],
+                                              transform_mode=transform_mode,
+                                              init_affine_list=None,
+                                              nbins=nbins,
+                                              sampling_prop=sampling_prop,
+                                              level_iters=level_iters,
+                                              sigmas=sigmas,
+                                              factors=factors, threads=threads)
+        image_list = [res[0] for res in res_list_reg]
 
     while not converged:
         tmp_template = create_temporary_template(image_list,
                                                  out_path=tmp_template,
                                                  avg_method=avg_method)
-        reg_list_node = parallel_dipy_list_reg(img_list,
-                                               reference=tmp_template,
-                                               transform_mode=transform_mode,
-                                               init_affine_list=None,
-                                               nbins=nbins,
-                                               sampling_prop=sampling_prop,
-                                               level_iters=level_iters,
-                                               sigmas=sigmas,
-                                               factors=factors, threads=threads)
-        reg_list_node.run()
+        res_list_reg = parallel_dipy_list_reg(img_list,
+                                              reference=tmp_template,
+                                              transform_mode=transform_mode,
+                                              init_affine_list=None,
+                                              nbins=nbins,
+                                              sampling_prop=sampling_prop,
+                                              level_iters=level_iters,
+                                              sigmas=sigmas,
+                                              factors=factors, threads=threads)
 
-        image_list = reg_list_node.inputs.out_file
-        mat_list = reg_list_node.inputs.out_matrix_file
+        image_list = [res[0] for res in res_list_reg]
+        mat_list = [res[1] for res in res_list_reg]
         # test if every transformation matrix has reached the convergence
         convergence_list = [template_convergence(
             mat, 'matrix', convergence_threshold) for mat in mat_list]
