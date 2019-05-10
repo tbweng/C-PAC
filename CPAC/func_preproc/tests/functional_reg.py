@@ -855,45 +855,8 @@ def template_creation_dipy(img_list, output_folder,
         # test if every transformation matrix has reached the convergence
         convergence_list = [template_convergence(
             mat, 'matrix', convergence_threshold) for mat in mat_list]
+        print("Average matrices distance " + str(np.mean(convergence_list)))
         converged = all(convergence_list)
 
     template = tmp_template
     return template
-
-# def wrapper_dipy(**kwargs):
-#     tmp_func = partial(dipy_registration,
-#                        reference=reference,
-#                        transform_mode=transform_mode,
-#                        nbins=nbins,
-#                        sampling_prop=sampling_prop,
-#                        level_iters=level_iters,
-#                        sigmas=sigmas,
-#                        factors=factors)
-#
-# def aff(a, x, b=0):
-#      return a * x + b
-#
-# def temp_aff(a, b, x=1):
-#     return aff(a, x, b)
-#
-# p = partial(temp_aff, x=2)
-#
-# yargs = [(1, 2), (2, 3), (3, 4)]
-#
-# pool = ThreadPool(2)
-# results = pool.starmap(p, yargs)
-# pool.close()
-# pool.join()
-#
-# def wrap_aff(f, x):
-#     return partial(f, x=x)
-#
-# def unwrap(func, d):
-#     return func(**d)
-#
-# t = partial(unwrap(wrap_aff(aff, 2)))
-#
-# tt = partial(unwrap, partial(aff, a=2, b=3))
-# tt = partial(unwrap, partial(aff, x=3))
-#
-# tt({'x': 2})
