@@ -1112,16 +1112,13 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
     strat_list += new_strat_list
 
     # Inserting Functional Data workflow
-    if ('func' in sub_dict or 'rest' in sub_dict) and \
+    if 'func' in sub_dict and \
             1 in getattr(c, 'runFunctional', [1]):
         #  pipeline needs to have explicit [0] to disable functional workflow
-
         for num_strat, strat in enumerate(strat_list):
 
-            if 'func' in sub_dict:
-                func_paths_dict = sub_dict['func']
-            else:
-                func_paths_dict = sub_dict['rest']
+            func_paths_dict = sub_dict['func']
+
 
             func_wf = create_func_datasource(func_paths_dict,
                                             'func_gather_%d' % num_strat)
@@ -3372,13 +3369,8 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
 
         scan_ids = ['scan_anat']
 
-        if 'func' in sub_dict:
-            scan_ids += ['scan_' + str(scan_id)
-                         for scan_id in sub_dict['func']]
-
-        if 'rest' in sub_dict:
-            scan_ids += ['scan_' + str(scan_id)
-                         for scan_id in sub_dict['rest']]
+        scan_ids += ['scan_' + str(scan_id)
+                     for scan_id in sub_dict['func']]
 
 
         for num_strat, strat in enumerate(strat_list):
