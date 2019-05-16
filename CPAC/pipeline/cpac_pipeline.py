@@ -1102,7 +1102,8 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
                 'seg_probability_maps': (seg_preproc, 'outputspec.probability_maps'),
                 'seg_mixeltype': (seg_preproc, 'outputspec.mixeltype'),
                 'seg_partial_volume_map': (seg_preproc, 'outputspec.partial_volume_map'),
-                'seg_partial_volume_files': (seg_preproc, 'outputspec.partial_volume_files')
+                'seg_partial_volume_files': (seg_preproc, 'outputspec.partial_volume_files'),
+                'seg_out_prefix': (seg_preproc, 'outputspec.out_prefix')
             })
 
             create_log_node(workflow,
@@ -1111,14 +1112,42 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
 
     strat_list += new_strat_list
 
+    from CPAC.func_preproc.asl_preproc import create_asl_preproc
+
     # Inserting Functional Data workflow
     if 'func' in sub_dict and \
             1 in getattr(c, 'runFunctional', [1]):
         #  pipeline needs to have explicit [0] to disable functional workflow
         for num_strat, strat in enumerate(strat_list):
 
-            func_paths_dict = sub_dict['func']
 
+            # Start ASL workflow builder
+
+            asl_paths_dict = {}
+            for func_key, func_dict in sub_dict['func'].iteritems():
+                if 'scantype' in func_dict and func_dict['scantype'] == 'asl':
+                    asl_paths_dict[func_key] = func_dict
+
+            asl_preproc = create_asl_preproc(asl_paths_dict, wf_name='func_preproc_automask_%d' % num_strat))
+
+            # you may be able to ignore the output of create_asl_workflow
+
+
+    # Inserting Functional Data workflow
+    if 'func' in sub_dict and \
+            1 in getattr(c, 'runFunctional', [1]):
+        #  pipeline needs to have explicit [0] to disable functional workflow
+        for num_strat, strat in enumerate(strat_list):
+
+            # func_paths_dict = sub_dict['func']
+
+            # Start BOLD workflow builder
+
+            func_paths_dict = {}
+            for func_key, func_dict in sub_dict['func'].iteritems():
+                # select bold scans only
+                if 'scantype' not in func_dict or func_dict['scantype'] != 'asl':
+                    func_paths_dict[func_key] = func_dict
 
             func_wf = create_func_datasource(func_paths_dict,
                                             'func_gather_%d' % num_strat)
