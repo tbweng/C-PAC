@@ -332,7 +332,7 @@ def template_convergence(mat_file, mat_type='matrix',
 
 
 def template_creation_flirt(img_list, output_folder,
-                            init_reg=MapNode, avg_method='median', dof=12,
+                            init_reg=None, avg_method='median', dof=12,
                             interp='trilinear', cost='corratio',
                             mat_type='matrix',
                             convergence_threshold=np.finfo(np.float64).eps):
@@ -391,7 +391,7 @@ def template_creation_flirt(img_list, output_folder,
         converged = False
 
     tmp_template = os.path.join(output_folder, 'tmp_template.nii.gz')
-
+    file1 = open("/Users/cf27246/convergence_test.txt", "w")  # write mode
     while not converged:
         tmp_template = create_temporary_template(image_list,
                                                  out_path=tmp_template,
@@ -410,6 +410,15 @@ def template_creation_flirt(img_list, output_folder,
         convergence_list = [template_convergence(
             mat, mat_type, convergence_threshold) for mat in mat_list]
         converged = all(convergence_list)
+
+        # DEBUG
+        norms = [read_mat(mat) for mat in mat_list]
+        mean_distance = np.mean(np.array([norm_transformations(tr, oth)
+                                          for (tr, oth) in norms]))
+        print("Average matrices distance " + str(mean_distance))
+        file1.write("Average matrices distance" +
+                    str(mean_distance) + "\n")
+    file1.close()
 
     template = tmp_template
     return template
@@ -604,7 +613,8 @@ def parallel_dipy_list_reg(img_list, reference,
                            sampling_prop=None,
                            level_iters=[10000, 1000, 100],
                            sigmas=[3.0, 1.0, 0.0],
-                           factors=[4, 2, 1], threads=2):
+                           factors=[4, 2, 1],
+                           thread_pool=2):
     """
     Register a list of images to a reference image using the
     dipy.align.imaffine functions
@@ -675,7 +685,10 @@ def parallel_dipy_list_reg(img_list, reference,
         the registrations
     """
 
-    pool = ThreadPool(threads)
+    if isinstance(thread_pool, int):
+        pool = ThreadPool(thread_pool)
+    else:
+        pool = thread_pool
 
     if init_affine_list is not None:
         if len(init_affine_list) != len(img_list):
@@ -706,8 +719,10 @@ def parallel_dipy_list_reg(img_list, reference,
                        sigmas=sigmas,
                        factors=factors)
         results = pool.map(temp, img_list)
-    pool.close()
-    pool.join()
+
+    if isinstance(thread_pool, int):
+        pool.close()
+        pool.join()
     # results should be a list of tuples of registered images and their
     # transformation matrix
     return results
@@ -818,10 +833,13 @@ def template_creation_dipy(img_list, output_folder,
 
     index = random.randrange(len(img_list))
 
+    pool = ThreadPool(threads)
+
     center_align = parallel_dipy_list_reg(img_list,
                                           interp=interp,
                                           reference=img_list[index],
-                                          transform_mode='c_of_mass')
+                                          transform_mode='c_of_mass',
+                                          thread_pool=pool)
 
     image_list = [res[0] for res in center_align]
 
@@ -835,9 +853,11 @@ def template_creation_dipy(img_list, output_folder,
                                               sampling_prop=sampling_prop,
                                               level_iters=level_iters,
                                               sigmas=sigmas,
-                                              factors=factors, threads=threads)
+                                              factors=factors,
+                                              thread_pool=pool)
         image_list = [res[0] for res in res_list_reg]
 
+    file1 = open("/Users/cf27246/convergence_test.txt", "w")  # write mode
     while not converged:
         tmp_template = create_temporary_template(image_list,
                                                  out_path=tmp_template,
@@ -850,15 +870,281 @@ def template_creation_dipy(img_list, output_folder,
                                               sampling_prop=sampling_prop,
                                               level_iters=level_iters,
                                               sigmas=sigmas,
-                                              factors=factors, threads=threads)
+                                              factors=factors,
+                                              thread_pool=pool)
 
         image_list = [res[0] for res in res_list_reg]
         mat_list = [res[1] for res in res_list_reg]
         # test if every transformation matrix has reached the convergence
         convergence_list = [template_convergence(
             mat, 'matrix', convergence_threshold) for mat in mat_list]
-        print("Average matrices distance " + str(np.mean(convergence_list)))
+        # DEBUG
+        norms = [read_mat(mat) for mat in mat_list]
+        mean_distance = np.mean(np.array([norm_transformations(tr, oth)
+                                          for (tr, oth) in norms]))
+        print("Average matrices distance " + str(mean_distance))
+        file1.write("Average matrices distance" +
+                    str(mean_distance) + "\n")
+
         converged = all(convergence_list)
+
+    file1.close()
 
     template = tmp_template
     return template
+
+
+def longitudinal_template_creation_node(
+        wf_name='longitudinal_template_creation_node', num_threads=1):
+    create_template = pe.Workflow(name=wf_name)
+
+    inputspec = pe.Node(util.IdentityInterface(
+        fields=['img_list',
+                'output_folder',
+                'avg_method',
+                'transform_mode',
+                'interp',
+                'init_method',
+                'nbins',
+                'sampling_prop',
+                'level_iters',
+                'sigmas',
+                'factors',
+                'convergence_threshold']))
+
+    outputspec = pe.Node(util.IdentityInterface(
+        fields=['template']), name='outputspec')
+
+    # average the images
+
+    calc_longitudinal_template = \
+        pe.Node(interface=util.Function(input_names=[['img_list',
+                                                      'output_folder',
+                                                      'avg_method',
+                                                      'transform_mode',
+                                                      'interp',
+                                                      'init_method',
+                                                      'nbins',
+                                                      'sampling_prop',
+                                                      'level_iters',
+                                                      'sigmas',
+                                                      'factors',
+                                                      'convergence_threshold',
+                                                      'threads']],
+                                        output_names=['warp_list',
+                                                      'warped_image'],
+                                        function=template_creation_dipy),
+                name='calc_ants_warp')
+    calc_longitudinal_template.inputs.threads = num_threads
+    return calc_longitudinal_template
+
+def format_ants_param(option, transform_list, expected_type):
+    l_opt = len(option)
+    l_tr = len(transform_list)
+    # meaning we expect to have a list of lists
+    if expected_type == list:
+        if isinstance(option[0], list) and l_opt == l_tr:
+            return option
+        # option is something like [[elem1, elem2 ...]]
+        elif isinstance(option[0], list) and l_opt == 1:
+            return option * l_tr
+        # option is a simple list [elem1, elem2 ...] but we want a list of lists
+        else:
+            return [option] * l_tr
+    # we expect to have a list of "expected_type" elements
+    if isinstance(option, expected_type):
+        return [option] * l_tr
+    elif isinstance(option, list):
+        if l_opt == 1:
+            return option * l_tr
+    # option is in the right format
+    if l_opt == l_tr:
+        return option
+    # option is in the simplified format
+    elif l_opt == 1:
+        return option * l_tr
+    else:
+        raise ValueError("The list-shaped parameter should either have")
+
+
+# def ants_affine_reg(fixed_image,
+#                     moving_image,
+#                     output_transform_prefix,
+#                     transforms,
+#                     transform_parameters,
+#                     number_of_iterations,
+#                     dimension=3,
+#                     metric,
+#                     metric_weight,
+#                     radius_or_number_of_bins,
+#                     sampling_strategy,
+#                     sampling_percentage,
+#                     convergence_threshold=np.finfo(np.float64).eps,
+#                     convergence_window_size,
+#                     smoothing_sigmas,
+#                     shrink_factors,
+#                     threads=2):
+#     reg.inputs.write_composite_transform = True
+#     reg.inputs.collapse_output_transforms = False
+#     reg.inputs.initialize_transforms_per_stage = False
+#     # We always use voxels for every transformation
+#     reg.inputs.sigma_units = ['vox'] * len(smoothing_sigmas)
+#     reg.inputs.use_estimate_learning_rate_once = [True, True]
+#     reg.inputs.use_histogram_matching = [True, True]
+#
+# reg.inputs.fixed_image = 'fixed1.nii'
+# reg.inputs.moving_image = 'moving1.nii'
+# reg.inputs.output_transform_prefix = "output_"
+# reg.inputs.transforms = ['Affine', 'SyN']
+# reg.inputs.transform_parameters = [(2.0,), (0.25, 3.0, 0.0)]
+# reg.inputs.number_of_iterations = [[1500, 200], [100, 50, 30]]
+# reg.inputs.dimension = 3
+# reg.inputs.write_composite_transform = True
+# reg.inputs.collapse_output_transforms = False
+# reg.inputs.initialize_transforms_per_stage = False
+# reg.inputs.metric = ['CC'] * 2
+# reg.inputs.metric_weight = [1] * 2  # Default (value ignored currently by ANTs)
+# reg.inputs.radius_or_number_of_bins = [32] * 2
+# reg.inputs.sampling_strategy = ['Random']
+# reg.inputs.sampling_percentage = [0.05, None]
+# reg.inputs.convergence_threshold = [1.e-8, 1.e-9]
+# reg.inputs.convergence_window_size = [20] * 2
+# reg.inputs.smoothing_sigmas = [[1, 0], [2, 1, 0]]
+# reg.inputs.sigma_units = ['vox'] * 2
+# reg.inputs.shrink_factors = [[2, 1], [3, 2, 1]]
+# reg.inputs.use_estimate_learning_rate_once = [True, True]
+# reg.inputs.use_histogram_matching = [True, True]
+
+
+class Metric(object):
+    types = {'cc': 'CC',
+             'mi': 'MI',
+             'mattes': 'Mattes',
+             'meansquares': 'MeanSquares',
+             'demons': 'Demons',
+             'gc': 'GC',
+             'icp': 'ICP',
+             'pse': 'PSE'}
+    samp_strategies = {'none': 'None',
+                       'regular': 'Regular',
+                       'random': 'Random'}
+    def __init__(self, metric,
+                 fixed_img,
+                 moving_img,
+                 metric_weight,
+                 radius_or_nb_bins,
+                 sampling_strategy='None',
+                 sampling_percentage=1.0):
+        if metric.lower() not in self.types.keys():
+            raise ValueError("Unknown registration metric type: " + metric)
+
+        if not os.path.exists(fixed_img):
+            raise ValueError(fixed_img + " is not an existing file")
+        if not os.path.exists(moving_img):
+            raise ValueError(moving_img + " is not an existing file")
+        if sampling_strategy is None:
+            sampling_strat = 'None'
+        elif sampling_strategy.lower() not in self.samp_strategies.keys():
+            raise ValueError(str(sampling_strategy) + "can either be 'None', " +
+                                                     "'Regular' or 'Random'")
+        else:
+            sampling_strat = self.samp_strategies[sampling_strategy.lower()]
+        if not (0.0 <= sampling_percentage <= 1.0):
+            raise ValueError(str(sampling_percentage) + "is a percentage " +
+                                                       "between 0.0 and 1.0")
+
+        self.out_str = self.types[metric.lower()] + '['
+        self.out_str = self.out_str + ','.join(
+            [fixed_img,
+             moving_img,
+             str(metric_weight),
+             str(radius_or_nb_bins),
+             sampling_strat,
+             str(float(sampling_percentage))])
+
+        self.out_str = self.out_str + ']'
+
+class Transform(object):
+    transform_type = {
+        'rigid': 'Rigid',
+        'affine': 'Affine',
+        'compositeaffine': 'CompositeAffine',
+        'similarity': 'Similarity',
+        'translation': 'Translation',
+        'bspline': 'BSpline',
+        'gaussiandisplacementfield': 'GaussianDisplacementField',
+        'bsplinedisplacementfield': 'BSplineDisplacementField',
+        'timevaryingvelocityfield': 'TimeVaryingVelocityField',
+        'timevaryingbsplinevelocityfield': 'TimeVaryingBSplineVelocityField',
+        'syn': 'SyN',
+        'bsplinesyn': 'BSplineSyN',
+        'exponential': 'Exponential',
+        'bsplineexponential': 'BSplineExponential'
+    }
+    # Minimum number of arguments expected for the transformations
+    expected_param = {
+        'rigid': 1,
+        'affine': 1,
+        'compositeaffine': 1,
+        'similarity': 1,
+        'translation': 1,
+        'bspline': 2,
+        'gaussiandisplacementfield': 3,
+        'bsplinedisplacementfield': 3,
+        'timevaryingvelocityfield': 6,
+        'timevaryingbsplinevelocityfield': 2,
+        'syn': 3,
+        'bsplinesyn': 3,
+        'exponential': 3,
+        'bsplineexponential': 3
+    }
+    def __init__(self, transform_name, gradient_step, *args):
+        if transform_name.lower() not in self.transform_type.keys():
+            raise ValueError("Unknown transformation name: " + transform_name)
+        if self.expected_param[transform_name.lower()] > len(args) + 1:
+            raise ValueError(
+                self.transform_type[transform_name.lower()] +
+                " transformation requires at least " +
+                str(self.expected_param[transform_name.lower()]) +
+                " parameters")
+
+        self.out_str = self.transform_type[transform_name.lower()] + \
+                       '[' + \
+                       ','.join(
+                           [str(gradient_step)] + [str(a) for a in args]
+                       ) + \
+                       ']'
+
+
+# def ants_reg(moving_image,
+#              fixed_image,
+#              transforms,
+#              output,
+#              interpolation,
+#              init_):
+#
+#     antsRegistration --dimensionality 3 --float 0 \
+#         --output [$thisfolder/pennTemplate_to_${sub}_,$thisfolder/pennTemplate_to_${sub}_Warped.nii.gz] \
+#         --interpolation Linear \
+#         --winsorize-image-intensities [0.005,0.995] \
+#         --use-histogram-matching 0 \
+#         --initial-moving-transform [$t1brain,$template,1] \
+#         --transform Rigid[0.1] \
+#         --metric MI[$t1brain,$template,1,32,Regular,0.25] \
+#         --convergence [1000x500x250x100,1e-6,10] \
+#         --shrink-factors 8x4x2x1 \
+#         --smoothing-sigmas 3x2x1x0vox \
+#         --transform Affine[0.1] \
+#         --metric MI[$t1brain,$template,1,32,Regular,0.25] \
+#         --convergence [1000x500x250x100,1e-6,10] \
+#         --shrink-factors 8x4x2x1 \
+#         --smoothing-sigmas 3x2x1x0vox \
+#         --transform SyN[0.1,3,0] \
+#         --metric CC[$t1brain,$template,1,4] \
+#         --convergence [100x70x50x20,1e-6,10] \
+#         --shrink-factors 8x4x2x1 \
+#         --smoothing-sigmas 3x2x1x0vox \
+#         -x $brainlesionmask
+#
+
+

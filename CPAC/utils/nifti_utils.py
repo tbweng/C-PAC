@@ -7,7 +7,8 @@ import nibabel as nib
 
 def nifti_image_input(image):
     """
-    Test if an input is a path or a nifti.image
+    Test if an input is a path or a nifti.image and the image loaded through
+    nibabel
     Parameters
     ----------
     image: str or nibabel.nifti1.Nifti1Image
