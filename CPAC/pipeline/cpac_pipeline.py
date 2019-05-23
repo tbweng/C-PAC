@@ -1128,7 +1128,10 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
                 if 'scantype' in func_dict and func_dict['scantype'] == 'asl':
                     asl_paths_dict[func_key] = func_dict
 
-            asl_preproc = create_asl_preproc(asl_paths_dict, wf_name='func_preproc_automask_%d' % num_strat))
+            def create_asl_preproc(data_config, resource_pool, pipeline_config, wf_name='asl_preproc'):
+
+
+            asl_preproc = create_asl_preproc(asl_paths_dict, strat, wf_name='asl_preproc_%d' % num_strat)
 
             # you may be able to ignore the output of create_asl_workflow
 
