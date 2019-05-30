@@ -6,6 +6,8 @@ import six
 from multiprocessing.dummy import Pool as ThreadPool
 from functools import partial
 import random
+from collections import Iterable
+import re
 
 import nibabel as nib
 import nipype.pipeline.engine as pe
@@ -1016,53 +1018,160 @@ def format_ants_param(option, transform_list, expected_type):
 # reg.inputs.use_histogram_matching = [True, True]
 
 
+# class Metric(object):
+#     common_metrics = {'cc': 'CC',
+#                       'mi': 'MI',
+#                       'mattes': 'Mattes',
+#                       'meansquares': 'MeanSquares',
+#                       'demons': 'Demons',
+#                       'gc': 'GC'}
+#     samp_strategies = {'none': 'None',
+#                        'regular': 'Regular',
+#                        'random': 'Random'}
+#
+#     def __init__(self, metric,
+#                  fixed_img,
+#                  moving_img,
+#                  metric_weight,
+#                  radius_or_nb_bins=None,
+#                  sampling_strategy='None',
+#                  sampling_percentage=1.0):
+#         if metric.lower() not in self.common_metrics.keys():
+#             raise ValueError("Unknown registration metric type: " + metric)
+#         if metric.lower() in ['cc', 'mi', 'mattes'] \
+#                 and radius_or_nb_bins is None:
+#             raise ValueError("radius_or_nb_bins cannot be None for CC, MI "+
+#                              "or Mattes")
+#         if not os.path.exists(fixed_img):
+#             raise ValueError(fixed_img + " is not an existing file")
+#         if not os.path.exists(moving_img):
+#             raise ValueError(moving_img + " is not an existing file")
+#         if sampling_strategy is None:
+#             sampling_strat = 'None'
+#         elif sampling_strategy.lower() not in self.samp_strategies.keys():
+#             raise ValueError(str(sampling_strategy) +
+#                              "can either be 'None', " +
+#                              "'Regular' or 'Random'")
+#         else:
+#             sampling_strat = self.samp_strategies[sampling_strategy.lower()]
+#         if not (0.0 <= sampling_percentage <= 1.0):
+#             raise ValueError(str(sampling_percentage) + "is a percentage " +
+#                              "between 0.0 and 1.0")
+#
+#         self.out_str = self.common_metrics[metric.lower()] + '['
+#         self.out_str = self.out_str + ','.join(
+#             [fixed_img,
+#              moving_img,
+#              str(metric_weight),
+#              str(radius_or_nb_bins),
+#              sampling_strat,
+#              str(float(sampling_percentage))])
+#
+#         self.out_str = self.out_str + ']'
+
+
 class Metric(object):
-    types = {'cc': 'CC',
-             'mi': 'MI',
-             'mattes': 'Mattes',
-             'meansquares': 'MeanSquares',
-             'demons': 'Demons',
-             'gc': 'GC',
-             'icp': 'ICP',
-             'pse': 'PSE'}
-    samp_strategies = {'none': 'None',
-                       'regular': 'Regular',
-                       'random': 'Random'}
-    def __init__(self, metric,
-                 fixed_img,
-                 moving_img,
-                 metric_weight,
-                 radius_or_nb_bins,
-                 sampling_strategy='None',
-                 sampling_percentage=1.0):
-        if metric.lower() not in self.types.keys():
-            raise ValueError("Unknown registration metric type: " + metric)
+    metrics = {'cc': 'CC',
+               'mi': 'MI',
+               'mattes': 'Mattes',
+               'meansquares': 'MeanSquares',
+               'demons': 'Demons',
+               'gc': 'GC',
+               'icp': 'ICP',
+               'pse': 'PSE',
+               'jhct': 'JHCT',
+               'igdm': 'IGDM'}
+    # Minimum number of arguments expected for the transformations
+    expected_param = {
+        'cc': 4,
+        'mi': 4,
+        'mattes': 4,
+        'meansquares': 3,
+        'demons': 3,
+        'gc': 3,
+        'icp': 3,
+        'pse': 3,
+        'jhct': 3,
+        'igdm': 5
+    }
 
-        if not os.path.exists(fixed_img):
-            raise ValueError(fixed_img + " is not an existing file")
-        if not os.path.exists(moving_img):
-            raise ValueError(moving_img + " is not an existing file")
-        if sampling_strategy is None:
-            sampling_strat = 'None'
-        elif sampling_strategy.lower() not in self.samp_strategies.keys():
-            raise ValueError(str(sampling_strategy) + "can either be 'None', " +
-                                                     "'Regular' or 'Random'")
+    def __init__(self, metric_name, *args):
+        if metric_name.lower() not in self.metrics.keys():
+            raise ValueError("Unknown transformation name: " + metric_name)
+        # -2 because fixed_image/pointset and moving_images/pointset are to be
+        # defined later
+        if self.expected_param[metric_name.lower()] - 2 > len(args):
+            raise ValueError(
+                self.metrics[metric_name.lower()] +
+                " transformation requires at least " +
+                str(self.expected_param[metric_name.lower()]) +
+                " parameters")
+        self.partial_metric = lambda fixed_image, moving_image: \
+            self.__complete_string(metric_name, fixed_image, moving_image,
+                                   *args)
+
+        self.out_str = None
+
+    @classmethod
+    def complete_metric(cls, metric_name, fixed_image, moving_image, *args):
+        metric = cls(metric_name, *args)
+        metric.complete(fixed_image, moving_image)
+        return metric
+
+    @classmethod
+    def from_string(cls, string):
+        p = re.compile('\w*\[(.*,)+(.+)\]')
+        if p.match(string):
+            metric_name = string.split('[')[0]
+            metric_param = string.split('[')[1].split(']')[0].split(',')
+            # 2 or less parameters means either a partial Metric or a wrong
+            # format
+            if len(metric_param) > 2:
+                try:
+                    metric = cls.complete_metric(metric_name, *metric_param)
+                except ValueError:
+                    print("cannot create a complete Metric, trying to create"
+                          " a partial Metric")
+                    metric = cls(metric_name, *metric_param)
+            else:
+                metric = cls(metric_name, *metric_param)
         else:
-            sampling_strat = self.samp_strategies[sampling_strategy.lower()]
-        if not (0.0 <= sampling_percentage <= 1.0):
-            raise ValueError(str(sampling_percentage) + "is a percentage " +
-                                                       "between 0.0 and 1.0")
+            raise ValueError(string + " has the wrong format, the Metric cannot"
+                                      "be created")
+        return metric
 
-        self.out_str = self.types[metric.lower()] + '['
-        self.out_str = self.out_str + ','.join(
-            [fixed_img,
-             moving_img,
-             str(metric_weight),
-             str(radius_or_nb_bins),
-             sampling_strat,
-             str(float(sampling_percentage))])
+    def is_complete(self):
+        return self.out_str is not None
 
-        self.out_str = self.out_str + ']'
+    def complete(self, fixed_image, moving_image):
+        if not os.path.exists(fixed_image):
+            raise ValueError(fixed_image + " is not an existing file")
+        if not os.path.exists(moving_image):
+            raise ValueError(moving_image + " is not an existing file")
+        self.partial_metric(fixed_image, moving_image)
+
+    def __complete_string(self, metric_name, fixed_image, moving_image, *args):
+        self.out_str = self.metrics[metric_name.lower()] + '[' + \
+                       ','.join([fixed_image, moving_image]) + ','+ \
+                       ','.join([str(a) for a in args]) + ']'
+
+fixed_path = '/Users/cf27246/test/MNI152_T1_3mm_brain.nii.gz'
+moving_path = '/Users/cf27246/test/test_fmri_mean.nii.gz'
+
+m0 = Metric('CC', 1, 4)
+print(m0.is_complete)
+m0.complete(fixed_path, moving_path)
+print(m0.is_complete)
+print(m0.out_str)
+
+m1 = Metric.complete_metric('CC', fixed_path, moving_path, 1, 4)
+print(m1.is_complete)
+print(m1.out_str)
+
+m2 = Metric.from_string('CC[' + ','.join([fixed_path, moving_path, '1, 4]']))
+print(m2.is_complete)
+print(m2.out_str)
+
 
 class Transform(object):
     transform_type = {
@@ -1098,6 +1207,7 @@ class Transform(object):
         'exponential': 3,
         'bsplineexponential': 3
     }
+
     def __init__(self, transform_name, gradient_step, *args):
         if transform_name.lower() not in self.transform_type.keys():
             raise ValueError("Unknown transformation name: " + transform_name)
@@ -1108,12 +1218,115 @@ class Transform(object):
                 str(self.expected_param[transform_name.lower()]) +
                 " parameters")
 
-        self.out_str = self.transform_type[transform_name.lower()] + \
-                       '[' + \
-                       ','.join(
-                           [str(gradient_step)] + [str(a) for a in args]
-                       ) + \
-                       ']'
+        self.out_str = self.transform_type[transform_name.lower()] + '[' + \
+            ','.join([str(gradient_step)] + [str(a) for a in args]) + ']'
+
+    @classmethod
+    def from_string(cls, string):
+        p = re.compile('\w+\[([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?(,.+)*)\]$')
+        if p.match(string):
+            transform_name = string.split('[')[0]
+            transform_param = string.split('[')[1].split(']')[0].split(',')
+            transform = cls(transform_name, *transform_param)
+        return transform
+
+'''--transform Rigid[0.1] --metric MI[$t1brain,$template,1,32,Regular,0.25] \  
+        --convergence [1000x500x250x100,1e-6,10] \  
+        --shrink-factors 8x4x2x1 \  
+        --smoothing-sigmas 3x2x1x0vox \
+'''
+def x_str(*args):
+    """
+    Convert a list of parameters into a string with the format:
+    arg1xarg2xargs3 ...
+    Parameters
+    ----------
+    args: list of parameters
+        if there is only one parameter which is an Iterable
+        (tuple, list, dict, numpy array ....), the output will be a string with
+        the content of the Iterable concatenated and separated by 'x' (note that
+        for dict-like objects, the keys will be concatenated).
+
+
+    Returns
+    -------
+
+    """
+    if len(args) == 1 and isinstance(args[0], Iterable):
+        return 'x'.join([str(a) for a in args[0]])
+    return 'x'.join([str(a) for a in args])
+
+
+class TransformParam(object):
+    def __init__(self, transform, metric, convergence, shrink, sigmas):
+        if isinstance(transform, Transform):
+            self.transform_str = transform.out_str
+        elif isinstance(transform, str):
+            self.transform_str = transform
+        else:
+            raise TypeError("transform can either be a Transform object " +
+                            "or a str")
+
+        self.convergence = x_str(convergence)
+        self.sigmas = x_str(sigmas)
+        self.shrink = x_str(shrink)
+
+        self.out_str = None
+
+        self.metric = metric
+
+        if isinstance(metric, Metric):
+            if metric.is_complete():
+                self.metric_str = metric.out_str
+                self.__complete_string()
+            else:
+                self.partial_transform_param = \
+                    lambda fixed_image, moving_image: self.__complete_string()
+        elif isinstance(metric, str):
+            self.metric_str = metric
+            self.__complete_string()
+        else:
+            raise TypeError("metric can either be a Metric object " +
+                            "or a str")
+
+    @classmethod
+    def complete_transform(cls, fixed_image, moving_image, transform,
+                           metric, convergence, shrink, sigmas):
+        if not metric.is_complete():
+            metric.complete(fixed_image, moving_image)
+        return TransformParam(transform, metric, convergence, shrink,
+                              sigmas)
+
+    def is_complete(self):
+        return self.out_str is not None
+
+    def complete(self, fixed_image, moving_image):
+        self.partial_transform_param(fixed_image, moving_image)
+
+    def __complete_string(self):
+        self.out_str = ' '.join(['--transform',
+                                 self.transform_str,
+                                 '--metric',
+                                 self.metric_str,
+                                 '--convergence',
+                                 '[' + self.convergence + ']',
+                                 '--shrink-factors',
+                                 self.shrink,
+                                 '--smoothing-sigmas',
+                                 self.sigmas])
+
+
+def ants_registration(dim, float, output, interp, winsorize,
+                      use_histo_matching):
+
+
+            # @classmethod
+    # def from_json(cls, book_as_json: str) -> 'Book':
+    #     book = json.loads(book_as_json)
+    #     return cls(title=book['title'], author=book['author'],
+    #                pages=book['pages'])
+
+
 
 
 # def ants_reg(moving_image,
