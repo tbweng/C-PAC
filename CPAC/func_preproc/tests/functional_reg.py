@@ -1098,7 +1098,7 @@ class Metric(object):
     def __init__(self, metric_name, *args):
         if metric_name.lower() not in self.metrics.keys():
             raise ValueError("Unknown transformation name: " + metric_name)
-        # -2 because fixed_image/pointset and moving_images/pointset are to be
+        # -2 because fixed_image/pointset and moving_image/pointset are to be
         # defined later
         if self.expected_param[metric_name.lower()] - 2 > len(args):
             raise ValueError(
@@ -1110,7 +1110,9 @@ class Metric(object):
             self.__complete_string(metric_name, fixed_image, moving_image,
                                    *args)
 
-        self.out_str = None
+        self.__out_str = None
+        self.fixed_image = None
+        self.moving_image = None
 
     @classmethod
     def complete_metric(cls, metric_name, fixed_image, moving_image, *args):
@@ -1124,6 +1126,7 @@ class Metric(object):
         if p.match(string):
             metric_name = string.split('[')[0]
             metric_param = string.split('[')[1].split(']')[0].split(',')
+            metric_param = [s.strip() for s in metric_param]
             # 2 or less parameters means either a partial Metric or a wrong
             # format
             if len(metric_param) > 2:
@@ -1141,36 +1144,66 @@ class Metric(object):
         return metric
 
     def is_complete(self):
-        return self.out_str is not None
+        return self.__out_str is not None
+
+    def get_str(self):
+        if not self.is_complete():
+            raise ValueError("The Metric has not been completed with the "
+                             "fixed and moving image paths")
+        else:
+            return self.__out_str
+
+    def get_fixed_image(self):
+        if not self.is_complete():
+            raise ValueError("The Metric has not been completed with the "
+                             "fixed and moving image paths")
+        else:
+            return self.fixed_image
+
+
+    def get_moving_image(self):
+        if not self.is_complete():
+            raise ValueError("The Metric has not been completed with the "
+                             "fixed and moving image paths")
+        else:
+            return self.moving_image
 
     def complete(self, fixed_image, moving_image):
         if not os.path.exists(fixed_image):
             raise ValueError(fixed_image + " is not an existing file")
         if not os.path.exists(moving_image):
             raise ValueError(moving_image + " is not an existing file")
+        self.fixed_image = fixed_image
+        self.moving_image = moving_image
         self.partial_metric(fixed_image, moving_image)
 
     def __complete_string(self, metric_name, fixed_image, moving_image, *args):
-        self.out_str = self.metrics[metric_name.lower()] + '[' + \
-                       ','.join([fixed_image, moving_image]) + ','+ \
+        self.__out_str = self.metrics[metric_name.lower()] + '[' + \
+                       ','.join([fixed_image, moving_image]) + ',' + \
                        ','.join([str(a) for a in args]) + ']'
 
 fixed_path = '/Users/cf27246/test/MNI152_T1_3mm_brain.nii.gz'
 moving_path = '/Users/cf27246/test/test_fmri_mean.nii.gz'
 
 m0 = Metric('CC', 1, 4)
-print(m0.is_complete)
+print(m0.is_complete())
 m0.complete(fixed_path, moving_path)
-print(m0.is_complete)
-print(m0.out_str)
+print(m0.is_complete())
+print(m0.get_str())
 
 m1 = Metric.complete_metric('CC', fixed_path, moving_path, 1, 4)
-print(m1.is_complete)
-print(m1.out_str)
+print(m1.is_complete())
+print(m1.get_str())
 
 m2 = Metric.from_string('CC[' + ','.join([fixed_path, moving_path, '1, 4]']))
-print(m2.is_complete)
-print(m2.out_str)
+print(m2.is_complete())
+print(m2.get_str())
+
+m3 = Metric.from_string('CC[1, 4]')
+print(m3.is_complete())
+m3.complete(fixed_path, moving_path)
+print(m3.is_complete())
+print(m3.get_str())
 
 
 class Transform(object):
@@ -1218,7 +1251,7 @@ class Transform(object):
                 str(self.expected_param[transform_name.lower()]) +
                 " parameters")
 
-        self.out_str = self.transform_type[transform_name.lower()] + '[' + \
+        self.__out_str = self.transform_type[transform_name.lower()] + '[' + \
             ','.join([str(gradient_step)] + [str(a) for a in args]) + ']'
 
     @classmethod
@@ -1227,8 +1260,25 @@ class Transform(object):
         if p.match(string):
             transform_name = string.split('[')[0]
             transform_param = string.split('[')[1].split(']')[0].split(',')
+            transform_param = [s.strip() for s in transform_param]
             transform = cls(transform_name, *transform_param)
+        else:
+            raise ValueError(string + " has the wrong format, the Transform"
+                                      " cannot be created")
         return transform
+
+    def get_str(self):
+        return self.__out_str
+
+
+
+
+t1 = Transform('Rigid', 0.1)
+print(t1.get_str())
+
+t2 = Transform.from_string('Rigid[0.1]')
+print(t2.get_str())
+
 
 '''--transform Rigid[0.1] --metric MI[$t1brain,$template,1,32,Regular,0.25] \  
         --convergence [1000x500x250x100,1e-6,10] \  
@@ -1253,41 +1303,46 @@ def x_str(*args):
 
     """
     if len(args) == 1 and isinstance(args[0], Iterable):
-        return 'x'.join([str(a) for a in args[0]])
+        # If there is only one string, returns the string
+        if isinstance(args[0], str):
+            return args[0]
+        else:
+            return 'x'.join([str(a) for a in args[0]])
     return 'x'.join([str(a) for a in args])
 
 
 class TransformParam(object):
     def __init__(self, transform, metric, convergence, shrink, sigmas):
         if isinstance(transform, Transform):
-            self.transform_str = transform.out_str
+            self.transform_str = transform.get_str()
         elif isinstance(transform, str):
-            self.transform_str = transform
+            self.transform_str = Transform.from_string(transform).get_str()
         else:
             raise TypeError("transform can either be a Transform object " +
-                            "or a str")
+                            "or a string")
 
         self.convergence = x_str(convergence)
+        if not (self.convergence.startswith('[') and
+                self.convergence.endswith(']')):
+            self.convergence = '[' + self.convergence + ']'
         self.sigmas = x_str(sigmas)
         self.shrink = x_str(shrink)
 
-        self.out_str = None
+        self.__out_str = None
 
-        self.metric = metric
-
-        if isinstance(metric, Metric):
+        if isinstance(metric, str):
+            self.metric = Metric.from_string(metric)
+        elif isinstance(metric, Metric):
+            self.metric = metric
             if metric.is_complete():
-                self.metric_str = metric.out_str
-                self.__complete_string()
-            else:
-                self.partial_transform_param = \
-                    lambda fixed_image, moving_image: self.__complete_string()
-        elif isinstance(metric, str):
-            self.metric_str = metric
-            self.__complete_string()
+                self.metric_str = metric.get_str()
         else:
             raise TypeError("metric can either be a Metric object " +
-                            "or a str")
+                            "or a string")
+
+        if self.metric.is_complete():
+            self.metric_str = metric.get_str()
+            self.__complete_string()
 
     @classmethod
     def complete_transform(cls, fixed_image, moving_image, transform,
@@ -1298,29 +1353,175 @@ class TransformParam(object):
                               sigmas)
 
     def is_complete(self):
-        return self.out_str is not None
+        return self.__out_str is not None
+
+    def get_str(self):
+        if not self.is_complete():
+            raise ValueError("The Metric has not been completed with the "
+                             "fixed and moving image paths")
+        else:
+            return self.__out_str
+
+    def get_fixed_image(self):
+        if not self.is_complete():
+            raise ValueError("The Metric has not been completed with the "
+                             "fixed and moving image paths")
+        else:
+            return self.metric.fixed_image
+
+    def get_moving_image(self):
+        if not self.is_complete():
+            raise ValueError("The Metric has not been completed with the "
+                             "fixed and moving image paths")
+        else:
+            return self.metric.moving_image
 
     def complete(self, fixed_image, moving_image):
-        self.partial_transform_param(fixed_image, moving_image)
+        self.metric.complete(fixed_image, moving_image)
+        self.metric_str = self.metric.get_str()
+        self.__complete_string()
 
     def __complete_string(self):
-        self.out_str = ' '.join(['--transform',
-                                 self.transform_str,
-                                 '--metric',
-                                 self.metric_str,
-                                 '--convergence',
-                                 '[' + self.convergence + ']',
-                                 '--shrink-factors',
-                                 self.shrink,
-                                 '--smoothing-sigmas',
-                                 self.sigmas])
+        self.__out_str = ' '.join(['--transform',
+                                   self.transform_str,
+                                   '--metric',
+                                   self.metric_str,
+                                   '--convergence',
+                                   self.convergence,
+                                   '--shrink-factors',
+                                   self.shrink,
+                                   '--smoothing-sigmas',
+                                   self.sigmas])
+
+fixed_path = '/Users/cf27246/test/MNI152_T1_3mm_brain.nii.gz'
+moving_path = '/Users/cf27246/test/test_fmri_mean.nii.gz'
+
+m0 = Metric('CC', 1, 4)
+
+m1 = Metric.complete_metric('CC', fixed_path, moving_path, 1, 4)
+
+m2 = Metric.from_string('CC[' + ','.join([fixed_path, moving_path, '1, 4]']))
+
+m3 = Metric.from_string('CC[1, 4]')
+
+tp0 = TransformParam(t1, m0, '[1000x500x250x100,1e-08,10]',
+                     [8,4,2,1], [3,2,1,0])
+print(tp0.is_complete())
+tp0.complete(fixed_path, moving_path)
+print(tp0.is_complete())
+print(m0.is_complete())
+print(tp0.get_str())
+
+tp1 = TransformParam(t1, m1, '[1000x500x250x100,1e-08,10]',
+                     [8,4,2,1], [3,2,1,0])
+print(tp1.is_complete())
+print(tp1.get_str())
+
+tp2 = TransformParam(t2, m2, '[1000x500x250x100,1e-08,10]',
+                     [8,4,2,1], [3,2,1,0])
+print(tp2.is_complete())
+print(tp2.get_str())
+
+tp3 = TransformParam(t2, m3, '[1000x500x250x100,1e-08,10]',
+                     [8, 4, 2, 1], [3 ,2 ,1 ,0])
+print(tp3.is_complete())
+tp3.complete(fixed_path, moving_path)
+print(tp3.is_complete())
+print(tp3.get_str())
 
 
-def ants_registration(dim, float, output, interp, winsorize,
-                      use_histo_matching):
+def ants_registration(transforms,
+                      moving_image=None,
+                      fixed_image=None,
+                      output='transform',
+                      dim=3,
+                      interp='Linear',
+                      winsorize='[0.005,0.995]',
+                      use_histo_matching=1,
+                      init_transform=None,
+                      masks=None,
+                      use_float=0,
+                      collapse_out_transforms='0'):
+    if isinstance(transforms, Transform):
+        transform_lst = [transforms.get_str()]
+    elif isinstance(transforms, str):
+        transform_lst = [Transform.from_string(transforms)]
+    elif isinstance(transforms, list):
+        transform_lst = ''
+        for tr in transforms:
+            if isinstance(transforms, Transform):
+                transform_lst = transform_lst.append(tr.get_str())
+            elif isinstance(transforms, str):
+                transform_lst = transform_lst.appemnd(
+                    Transform.from_string(tr))
+            else:
+                raise TypeError('transforms can either be a Transform object,'
+                                'a string or a list of Transform or strings')
+    else:
+        raise TypeError('transforms can either be a Transform object,'
+                        'a string or a list of Transform or strings')
+
+    output_str = ' '.join(["--output", str(output)])
+    dim_str = ' '.join(['dimensionality', str(dim)])
+    collapse_out_transforms_str = ' '.join(["--collapse-output-transforms",
+                                           str(collapse_out_transforms)])
+    interp_str = ' '.join(["--interpolation", str(interp)])
+    winsor_str = ' '.join(["--winsorize-image-intensities", str(winsorize)])
+    histo_str = ' '.join(["--use-histogram-matching ", str(use_histo_matching)])
+    use_float_str = ' '.join(['--float', str(use_float)])
+    masks_str = ' '.join(['--masks', str(masks)])
+
+    if moving_image is None and fixed_image is None:
+        if all([tr.is_complete() for tr in transform_lst]):
+            mov_img = transform_lst[0].get_moving_image()
+            fix_img = transform_lst[0].get_fixed_image()
+        else:
+            raise ValueError("moving and fixed images has to me defined"
+                             "either in the Transform/Metric objects or"
+                             "in the moving_image and fixed_image parameters")
+    elif moving_image is not None and fixed_image is not None:
+        mov_img = moving_image
+        fix_img = fixed_image
+        for tr in transform_lst:
+            tr.complete(fix_img, mov_img)
+    else:
+        raise ValueError("moving and fixed images has to me defined"
+                         "either in the Transform/Metric objects or"
+                         "in the moving_image and fixed_image parameters")
+
+    if init_transform is not None:
+        if re.match("^(0|1|2)$", str(init_transform)):
+            init_transform_str = '[' + mov_img + ',' + fix_img + \
+                                 str(init_transform) + ']'
+        elif isinstance(init_transform, str):
+            if os.path.exists(init_transform):
+                init_transform_str = init_transform
+            elif re.match("^[.+,(0|1)]$", init_transform):
+                init_tr_path = init_transform.split('[')[1].split(
+                        ']')[0].split(',')[0]
+                if os.path.exists(init_tr_path):
+                    init_transform_str = init_transform
+                else:
+                    raise ValueError(init_tr_path + "does not exist")
+            else:
+                raise ValueError(init_transform + "does not have the right"
+                                                  "format")
+        else:
+            raise ValueError(str(init_transform) + "does not have the right"
+                                                   "format")
+
+        init_transform_str = ' '.join(["--initial-moving-transform",
+                                      init_transform_str])
+
+    # --initial - moving - transform
+    # initialTransform
+    # [initialTransform, < useInverse >]
+    # [fixedImage, movingImage, initializationFeature]
 
 
-            # @classmethod
+
+
+    # @classmethod
     # def from_json(cls, book_as_json: str) -> 'Book':
     #     book = json.loads(book_as_json)
     #     return cls(title=book['title'], author=book['author'],
