@@ -8,6 +8,7 @@ from functools import partial
 import random
 from collections import Iterable
 import re
+import subprocess
 
 import nibabel as nib
 import nipype.pipeline.engine as pe
@@ -1429,6 +1430,9 @@ tp3.complete(fixed_path, moving_path)
 print(tp3.is_complete())
 print(tp3.get_str())
 
+class AntsRegistration(object):
+    def __init__(self):
+
 
 def ants_registration(transforms,
                       moving_image=None,
@@ -1442,17 +1446,17 @@ def ants_registration(transforms,
                       masks=None,
                       use_float=0,
                       collapse_out_transforms='0'):
-    if isinstance(transforms, Transform):
-        transform_lst = [transforms.get_str()]
+    if isinstance(transforms, TransformParam):
+        transform_lst = [transforms]
     elif isinstance(transforms, str):
         transform_lst = [Transform.from_string(transforms)]
     elif isinstance(transforms, list):
         transform_lst = ''
         for tr in transforms:
-            if isinstance(transforms, Transform):
-                transform_lst = transform_lst.append(tr.get_str())
+            if isinstance(transforms, TransformParam):
+                transform_lst = transform_lst.append(tr)
             elif isinstance(transforms, str):
-                transform_lst = transform_lst.appemnd(
+                transform_lst = transform_lst.append(
                     Transform.from_string(tr))
             else:
                 raise TypeError('transforms can either be a Transform object,'
@@ -1461,16 +1465,22 @@ def ants_registration(transforms,
         raise TypeError('transforms can either be a Transform object,'
                         'a string or a list of Transform or strings')
 
-    output_str = ' '.join(["--output", str(output)])
-    dim_str = ' '.join(['dimensionality', str(dim)])
+    transforms_str = ' '.join([tr.get_str() for tr in transform_lst])
+
+    out_pref = str(output)
+    output_str = ' '.join(["--output", '[' + out_pref + ',' + out_pref
+                           + '_Warped.nii.gz]'])
+    dim_str = ' '.join(['--dimensionality', str(dim)])
     collapse_out_transforms_str = ' '.join(["--collapse-output-transforms",
                                            str(collapse_out_transforms)])
     interp_str = ' '.join(["--interpolation", str(interp)])
     winsor_str = ' '.join(["--winsorize-image-intensities", str(winsorize)])
     histo_str = ' '.join(["--use-histogram-matching ", str(use_histo_matching)])
     use_float_str = ' '.join(['--float', str(use_float)])
-    masks_str = ' '.join(['--masks', str(masks)])
 
+    """ Could be modified to allow the modification of either or both moving
+    and fixed image
+    """
     if moving_image is None and fixed_image is None:
         if all([tr.is_complete() for tr in transform_lst]):
             mov_img = transform_lst[0].get_moving_image()
@@ -1512,6 +1522,61 @@ def ants_registration(transforms,
 
         init_transform_str = ' '.join(["--initial-moving-transform",
                                       init_transform_str])
+    else:
+        init_transform_str = ''
+
+    masks_str = ''
+    if masks is not None:
+        if re.match('￿ˆ\[\w+,\w+\]&'):
+            fixed = masks.split('[')[1].split(',')[0]
+            moving = masks.split(']')[0].split(',')[1]
+            if not os.path.exists(fixed):
+                raise ValueError(fixed + ' does not exist')
+            if not os.path.exists(moving):
+                raise ValueError(moving + ' does not exist')
+        else:
+            if not os.path.exists(masks):
+                raise ValueError(masks + ' does not exist')
+        masks_str = '--masks ' + masks
+
+    command = ' '.join(filter(None, [
+        'antsRegistration',
+        transforms_str,
+        output_str,
+        dim_str,
+        collapse_out_transforms_str,
+        interp_str,
+        winsor_str,
+        histo_str,
+        use_float_str,
+        init_transform_str,
+        masks_str
+    ]))
+
+    return command
+
+im1 = '/Users/cf27246/test/ants_reg/test_linear/median_sub-0027251_ses-1_' \
+      'task-msit_run-1_bold.nii.gz'
+template = '/Users/cf27246/test/ants_reg/test_linear/test_median_fmri.nii.gz'
+m11 = Metric.complete_metric('CC', template, im1, 1, 4)
+tp1 = TransformParam(t1, m11, '[1000x500x250x100,1e-06,10]',
+                     [8,4,2,1], [3,2,1,0])
+print(tp1.is_complete())
+print(tp1.get_str())
+regcmd = ants_registration(tp1)
+os.system("echo '%s' | pbcopy" % regcmd)
+subprocess.check_output(regcmd)
+# with open(command_file, 'wt') as f:
+#     f.write(' '.join(regcmd))
+
+try:
+    retcode = subprocess.check_output(regcmd)
+except Exception as e:
+    raise Exception('[!] ANTS registration did not complete successfully.'
+                    '\n\nError details:\n{0}\n{1}\n'.format(e, e.output))
+
+
+
 
     # --initial - moving - transform
     # initialTransform
