@@ -1285,6 +1285,10 @@ print(t2.get_str())
         --convergence [1000x500x250x100,1e-6,10] \  
         --shrink-factors 8x4x2x1 \  
         --smoothing-sigmas 3x2x1x0vox \
+        
+        level_iters=[10000, 1000, 100],
+                           sigmas=[3.0, 1.0, 0.0],
+                           factors=[4, 2, 1]
 '''
 def x_str(*args):
     """
@@ -1430,8 +1434,184 @@ tp3.complete(fixed_path, moving_path)
 print(tp3.is_complete())
 print(tp3.get_str())
 
+
 class AntsRegistration(object):
-    def __init__(self):
+    def __init__(self,
+                 transforms,
+                 moving_image=None,
+                 fixed_image=None,
+                 output='transform',
+                 dim=3,
+                 interp='Linear',
+                 winsorize='[0.005,0.995]',
+                 use_histo_matching=1,
+                 init_transform=None,
+                 masks=None,
+                 use_float=0,
+                 collapse_out_transforms='0'):
+        if isinstance(transforms, TransformParam):
+            self.transform_lst = [transforms]
+        elif isinstance(transforms, str):
+            self.transform_lst = [Transform.from_string(transforms)]
+        elif isinstance(transforms, list):
+            self.transform_lst = ''
+            for tr in transforms:
+                if isinstance(transforms, TransformParam):
+                    self.transform_lst = self.transform_lst.append(tr)
+                elif isinstance(transforms, str):
+                    self.transform_lst = self.transform_lst.append(
+                        Transform.from_string(tr))
+                else:
+                    raise TypeError(
+                        'transforms can either be a Transform object,'
+                        'a string or a list of Transform or strings')
+        else:
+            raise TypeError('transforms can either be a Transform object,'
+                            'a string or a list of Transform or strings')
+
+        """ Could also add the possibility to use the same parameters for
+        several transformations. Like defining the interrations once and if it
+        is not provided for the other transformations the first one will be 
+        repeated.
+        """
+
+        self.transforms_str = ' '.join(
+            [tr.get_str() for tr in self.transform_lst])
+
+        out_pref = str(output)
+        self.output_str = ' '.join(["--output", '[' + out_pref + ',' + out_pref
+                                    + '_Warped.nii.gz]'])
+        self.dim_str = ' '.join(['--dimensionality', str(dim)])
+        self.collapse_out_transforms_str = ' '.join(
+            ["--collapse-output-transforms", str(collapse_out_transforms)])
+        self.interp_str = ' '.join(["--interpolation", str(interp)])
+        self.winsor_str = ' '.join(["--winsorize-image-intensities", str(winsorize)])
+        self.histo_str = ' '.join(["--use-histogram-matching ",
+                                   str(use_histo_matching)])
+        self.use_float_str = ' '.join(['--float', str(use_float)])
+
+        """ Could be modified to allow the modification of either or both moving
+        and fixed image
+        """
+        if moving_image is None and fixed_image is None:
+            if all([tr.is_complete() for tr in self.transform_lst]):
+                mov_img = self.transform_lst[0].get_moving_image()
+                fix_img = self.transform_lst[0].get_fixed_image()
+            else:
+                raise ValueError(
+                    "moving and fixed images has to me defined"
+                    "either in the Transform/Metric objects or"
+                    "in the moving_image and fixed_image parameters")
+        elif moving_image is not None and fixed_image is not None:
+            mov_img = moving_image
+            fix_img = fixed_image
+            for tr in self.transform_lst:
+                tr.complete(fix_img, mov_img)
+        else:
+            raise ValueError("moving and fixed images has to me defined"
+                             "either in the Transform/Metric objects or"
+                             "in the moving_image and fixed_image parameters")
+
+        if init_transform is not None:
+            if re.match("^(0|1|2)$", str(init_transform)):
+                self.init_transform_str = '[' + mov_img + ',' + fix_img + \
+                                          str(init_transform) + ']'
+            elif isinstance(init_transform, str):
+                if os.path.exists(init_transform):
+                    self.init_transform_str = init_transform
+                elif re.match("^[.+,(0|1)]$", init_transform):
+                    init_tr_path = init_transform.split('[')[1].split(
+                            ']')[0].split(',')[0]
+                    if os.path.exists(init_tr_path):
+                        self.init_transform_str = init_transform
+                    else:
+                        raise ValueError(init_tr_path + "does not exist")
+                else:
+                    raise ValueError(init_transform + "does not have the right"
+                                                      "format")
+            else:
+                raise ValueError(str(init_transform) + "does not have the right"
+                                                       "format")
+
+            self.init_transform_str = ' '.join(["--initial-moving-transform",
+                                                self.init_transform_str])
+        else:
+            self.init_transform_str = ''
+
+        self.masks_str = ''
+        if masks is not None:
+            if re.match('￿ˆ\[\w+,\w+\]&'):
+                fixed = masks.split('[')[1].split(',')[0]
+                moving = masks.split(']')[0].split(',')[1]
+                if not os.path.exists(fixed):
+                    raise ValueError(fixed + ' does not exist')
+                if not os.path.exists(moving):
+                    raise ValueError(moving + ' does not exist')
+            else:
+                if not os.path.exists(masks):
+                    raise ValueError(masks + ' does not exist')
+            self.masks_str = '--masks ' + masks
+
+    def is_complete(self):
+        return self.__out_str is not None
+
+    def get_str(self):
+        if not self.is_complete():
+            raise ValueError("The Metric has not been completed with the "
+                             "fixed and moving image paths")
+        else:
+            return self.__out_str
+
+    def get_fixed_image(self):
+        if not self.is_complete():
+            raise ValueError("The Metric has not been completed with the "
+                             "fixed and moving image paths")
+        else:
+            return self.metric.fixed_image
+
+    def get_moving_image(self):
+        if not self.is_complete():
+            raise ValueError("The Metric has not been completed with the "
+                             "fixed and moving image paths")
+        else:
+            return self.metric.moving_image
+
+    # def set_fixed_image(self, fixed_image):
+    #     if not all([tr.is_complete() for tr in self.transform_lst]):
+    #
+    #     for tr in self.transform_lst:
+    #         tr.
+    #
+    # def set_fixed_image(self, moving_image):
+
+    def complete(self, fixed_image, moving_image):
+        self.metric.complete(fixed_image, moving_image)
+        self.metric_str = self.metric.get_str()
+        self.__complete_string()
+
+    def __complete_string(self):
+        self.__out_str = ' '.join(filter(None, [
+            'antsRegistration',
+            self.transforms_str,
+            self.output_str,
+            self.dim_str,
+            self.collapse_out_transforms_str,
+            self.interp_str,
+            self.winsor_str,
+            self.histo_str,
+            self.use_float_str,
+            self.init_transform_str,
+            self.masks_str
+        ]))
+
+    def get_transform_norm(self):
+        print(self.__out_str)
+
+    def run(self):
+        # run ants reg
+        # set the output filesnames
+        # calculate norm
+        print(self.__out_str)
 
 
 def ants_registration(transforms,
@@ -1559,8 +1739,8 @@ im1 = '/Users/cf27246/test/ants_reg/test_linear/median_sub-0027251_ses-1_' \
       'task-msit_run-1_bold.nii.gz'
 template = '/Users/cf27246/test/ants_reg/test_linear/test_median_fmri.nii.gz'
 m11 = Metric.complete_metric('CC', template, im1, 1, 4)
-tp1 = TransformParam(t1, m11, '[1000x500x250x100,1e-06,10]',
-                     [8,4,2,1], [3,2,1,0])
+tp1 = TransformParam(t1, m11, '[100,1e-06,10]',
+                     [1], [0])
 print(tp1.is_complete())
 print(tp1.get_str())
 regcmd = ants_registration(tp1)
@@ -1575,6 +1755,19 @@ except Exception as e:
     raise Exception('[!] ANTS registration did not complete successfully.'
                     '\n\nError details:\n{0}\n{1}\n'.format(e, e.output))
 
+
+def loop_ants_reg(ants_reg_list,
+                  thread_pool=None):
+    if isinstance(thread_pool, int):
+        pool = ThreadPool(thread_pool)
+    else:
+        pool = thread_pool
+
+    pool.map(lambda ants_reg: ants_reg.run(), ants_reg_list)
+
+    if isinstance(thread_pool, int):
+        pool.close()
+        pool.join()
 
 
 
@@ -1626,4 +1819,49 @@ except Exception as e:
 #         -x $brainlesionmask
 #
 
+# FLIRT speed test
+dof=12
+interp='trilinear'
+cost='corratio'
 
+linear_reg = fsl.FLIRT()
+
+# iterfields
+linear_reg.inputs.in_file = im1
+linear_reg.inputs.out_file = \
+    '/Users/cf27246/test/ants_reg/test_linear/flirt_output.nii.gz'
+linear_reg.inputs.out_matrix_file = \
+    '/Users/cf27246/test/ants_reg/test_linear/flirt_output.mat'
+
+# fixed inputs
+linear_reg.inputs.cost = cost
+linear_reg.inputs.dof = dof
+linear_reg.inputs.interp = interp
+linear_reg.inputs.reference = template
+
+# linear_reg.run()
+
+def test():
+    dof = 12
+    interp = 'trilinear'
+    cost = 'corratio'
+
+    linear_reg = fsl.FLIRT()
+
+    # iterfields
+    linear_reg.inputs.in_file = im1
+    linear_reg.inputs.out_file = \
+        '/Users/cf27246/test/ants_reg/test_linear/flirt_output.nii.gz'
+    linear_reg.inputs.out_matrix_file = \
+        '/Users/cf27246/test/ants_reg/test_linear/flirt_output.mat'
+
+    # fixed inputs
+    linear_reg.inputs.cost = cost
+    linear_reg.inputs.dof = dof
+    linear_reg.inputs.interp = interp
+    linear_reg.inputs.reference = template
+
+    linear_reg.run()
+
+import timeit
+print(timeit.timeit("test()", setup="from __main__ import test", number=1))
