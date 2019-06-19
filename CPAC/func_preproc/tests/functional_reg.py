@@ -1183,29 +1183,6 @@ class Metric(object):
                        ','.join([fixed_image, moving_image]) + ',' + \
                        ','.join([str(a) for a in args]) + ']'
 
-fixed_path = '/Users/cf27246/test/MNI152_T1_3mm_brain.nii.gz'
-moving_path = '/Users/cf27246/test/test_fmri_mean.nii.gz'
-
-m0 = Metric('CC', 1, 4)
-print(m0.is_complete())
-m0.complete(fixed_path, moving_path)
-print(m0.is_complete())
-print(m0.get_str())
-
-m1 = Metric.complete_metric('CC', fixed_path, moving_path, 1, 4)
-print(m1.is_complete())
-print(m1.get_str())
-
-m2 = Metric.from_string('CC[' + ','.join([fixed_path, moving_path, '1, 4]']))
-print(m2.is_complete())
-print(m2.get_str())
-
-m3 = Metric.from_string('CC[1, 4]')
-print(m3.is_complete())
-m3.complete(fixed_path, moving_path)
-print(m3.is_complete())
-print(m3.get_str())
-
 
 class Transform(object):
     transform_type = {
@@ -1270,15 +1247,6 @@ class Transform(object):
 
     def get_str(self):
         return self.__out_str
-
-
-
-
-t1 = Transform('Rigid', 0.1)
-print(t1.get_str())
-
-t2 = Transform.from_string('Rigid[0.1]')
-print(t2.get_str())
 
 
 '''--transform Rigid[0.1] --metric MI[$t1brain,$template,1,32,Regular,0.25] \  
@@ -1398,42 +1366,6 @@ class TransformParam(object):
                                    '--smoothing-sigmas',
                                    self.sigmas])
 
-fixed_path = '/Users/cf27246/test/MNI152_T1_3mm_brain.nii.gz'
-moving_path = '/Users/cf27246/test/test_fmri_mean.nii.gz'
-
-m0 = Metric('CC', 1, 4)
-
-m1 = Metric.complete_metric('CC', fixed_path, moving_path, 1, 4)
-
-m2 = Metric.from_string('CC[' + ','.join([fixed_path, moving_path, '1, 4]']))
-
-m3 = Metric.from_string('CC[1, 4]')
-
-tp0 = TransformParam(t1, m0, '[1000x500x250x100,1e-08,10]',
-                     [8,4,2,1], [3,2,1,0])
-print(tp0.is_complete())
-tp0.complete(fixed_path, moving_path)
-print(tp0.is_complete())
-print(m0.is_complete())
-print(tp0.get_str())
-
-tp1 = TransformParam(t1, m1, '[1000x500x250x100,1e-08,10]',
-                     [8,4,2,1], [3,2,1,0])
-print(tp1.is_complete())
-print(tp1.get_str())
-
-tp2 = TransformParam(t2, m2, '[1000x500x250x100,1e-08,10]',
-                     [8,4,2,1], [3,2,1,0])
-print(tp2.is_complete())
-print(tp2.get_str())
-
-tp3 = TransformParam(t2, m3, '[1000x500x250x100,1e-08,10]',
-                     [8, 4, 2, 1], [3 ,2 ,1 ,0])
-print(tp3.is_complete())
-tp3.complete(fixed_path, moving_path)
-print(tp3.is_complete())
-print(tp3.get_str())
-
 
 class AntsRegistration(object):
     def __init__(self,
@@ -1448,19 +1380,18 @@ class AntsRegistration(object):
                  init_transform=None,
                  masks=None,
                  use_float=0,
-                 collapse_out_transforms='0'):
+                 collapse_out_transforms='1'):
         if isinstance(transforms, TransformParam):
             self.transform_lst = [transforms]
         elif isinstance(transforms, str):
             self.transform_lst = [Transform.from_string(transforms)]
         elif isinstance(transforms, list):
-            self.transform_lst = ''
+            self.transform_lst = []
             for tr in transforms:
-                if isinstance(transforms, TransformParam):
-                    self.transform_lst = self.transform_lst.append(tr)
-                elif isinstance(transforms, str):
-                    self.transform_lst = self.transform_lst.append(
-                        Transform.from_string(tr))
+                if isinstance(tr, TransformParam):
+                    self.transform_lst.append(tr)
+                elif isinstance(tr, str):
+                    self.transform_lst.append(Transform.from_string(tr))
                 else:
                     raise TypeError(
                         'transforms can either be a Transform object,'
@@ -1485,62 +1416,18 @@ class AntsRegistration(object):
         self.collapse_out_transforms_str = ' '.join(
             ["--collapse-output-transforms", str(collapse_out_transforms)])
         self.interp_str = ' '.join(["--interpolation", str(interp)])
-        self.winsor_str = ' '.join(["--winsorize-image-intensities", str(winsorize)])
+        self.winsor_str = ' '.join(["--winsorize-image-intensities",
+                                    str(winsorize)])
         self.histo_str = ' '.join(["--use-histogram-matching ",
                                    str(use_histo_matching)])
         self.use_float_str = ' '.join(['--float', str(use_float)])
 
-        """ Could be modified to allow the modification of either or both moving
-        and fixed image
-        """
-        if moving_image is None and fixed_image is None:
-            if all([tr.is_complete() for tr in self.transform_lst]):
-                mov_img = self.transform_lst[0].get_moving_image()
-                fix_img = self.transform_lst[0].get_fixed_image()
-            else:
-                raise ValueError(
-                    "moving and fixed images has to me defined"
-                    "either in the Transform/Metric objects or"
-                    "in the moving_image and fixed_image parameters")
-        elif moving_image is not None and fixed_image is not None:
-            mov_img = moving_image
-            fix_img = fixed_image
-            for tr in self.transform_lst:
-                tr.complete(fix_img, mov_img)
-        else:
-            raise ValueError("moving and fixed images has to me defined"
-                             "either in the Transform/Metric objects or"
-                             "in the moving_image and fixed_image parameters")
-
-        if init_transform is not None:
-            if re.match("^(0|1|2)$", str(init_transform)):
-                self.init_transform_str = '[' + mov_img + ',' + fix_img + \
-                                          str(init_transform) + ']'
-            elif isinstance(init_transform, str):
-                if os.path.exists(init_transform):
-                    self.init_transform_str = init_transform
-                elif re.match("^[.+,(0|1)]$", init_transform):
-                    init_tr_path = init_transform.split('[')[1].split(
-                            ']')[0].split(',')[0]
-                    if os.path.exists(init_tr_path):
-                        self.init_transform_str = init_transform
-                    else:
-                        raise ValueError(init_tr_path + "does not exist")
-                else:
-                    raise ValueError(init_transform + "does not have the right"
-                                                      "format")
-            else:
-                raise ValueError(str(init_transform) + "does not have the right"
-                                                       "format")
-
-            self.init_transform_str = ' '.join(["--initial-moving-transform",
-                                                self.init_transform_str])
-        else:
-            self.init_transform_str = ''
+        self.init_transform = init_transform
+        self.init_transform_str = None
 
         self.masks_str = ''
         if masks is not None:
-            if re.match('￿ˆ\[\w+,\w+\]&'):
+            if re.match('^\[\w+,\w+\]$', masks):
                 fixed = masks.split('[')[1].split(',')[0]
                 moving = masks.split(']')[0].split(',')[1]
                 if not os.path.exists(fixed):
@@ -1551,6 +1438,18 @@ class AntsRegistration(object):
                 if not os.path.exists(masks):
                     raise ValueError(masks + ' does not exist')
             self.masks_str = '--masks ' + masks
+
+        self.moving_image = None
+        self.fixed_image = None
+        if moving_image is None and fixed_image is None:
+            if all([tr.is_complete() for tr in self.transform_lst]):
+                self.set_moving_image(self.transform_lst[0].get_moving_image())
+                self.set_fixed_image(self.transform_lst[0].get_fixed_image())
+        else:
+            if moving_image is not None:
+                self.set_moving_image(moving_image)
+            if fixed_image is not None:
+                self.set_fixed_image(fixed_image)
 
     def is_complete(self):
         return self.__out_str is not None
@@ -1576,20 +1475,59 @@ class AntsRegistration(object):
         else:
             return self.metric.moving_image
 
-    # def set_fixed_image(self, fixed_image):
-    #     if not all([tr.is_complete() for tr in self.transform_lst]):
-    #
-    #     for tr in self.transform_lst:
-    #         tr.
-    #
-    # def set_fixed_image(self, moving_image):
+    def set_fixed_image(self, fixed_image):
+        # Overwrites the fixed images set for all transformations
+        if os.path.exists(fixed_image):
+            self.fixed_image = fixed_image
+        else:
+            raise ValueError(fixed_image + " does not exist")
+
+        if self.moving_image is not None:
+            self.complete(self.fixed_image, self.moving_image)
+
+    def set_moving_image(self, moving_image):
+        # Overwrites the moving images set for all transformations
+        if os.path.exists(moving_image):
+            self.moving_image = moving_image
+        else:
+            raise ValueError(moving_image + " does not exist")
+
+        if self.fixed_image is not None:
+            self.complete(self.fixed_image, self.moving_image)
 
     def complete(self, fixed_image, moving_image):
-        self.metric.complete(fixed_image, moving_image)
-        self.metric_str = self.metric.get_str()
+        if self.init_transform is not None:
+            if re.match("^([012])$", str(self.init_transform)):
+                self.init_transform_str = '[' + self.moving_image + ',' + \
+                                          self.fixed_image + \
+                                          str(self.init_transform) + ']'
+            elif isinstance(self.init_transform, str):
+                if os.path.exists(self.init_transform):
+                    self.init_transform_str = self.init_transform
+                elif re.match("^[.+,(0|1)]$", self.init_transform):
+                    init_tr_path = self.init_transform.split('[')[1].split(
+                            ']')[0].split(',')[0]
+                    if os.path.exists(init_tr_path):
+                        self.init_transform_str = self.init_transform
+                    else:
+                        raise ValueError(init_tr_path + "does not exist")
+                else:
+                    raise ValueError(self.init_transform + "does not have the "
+                                                           "right format")
+            else:
+                raise ValueError(str(self.init_transform) + "does not have the"
+                                                            " right format")
+
+            self.init_transform_str = ' '.join(["--initial-moving-transform",
+                                                self.init_transform_str])
+        self.moving_image = moving_image
+        self.fixed_image = fixed_image
+        for tr in self.transform_lst:
+            tr.complete(self.fixed_image, self.moving_image)
         self.__complete_string()
 
     def __complete_string(self):
+        # filter(None ... will remove the strings with None or '' from the list
         self.__out_str = ' '.join(filter(None, [
             'antsRegistration',
             self.transforms_str,
@@ -1631,19 +1569,20 @@ def ants_registration(transforms,
     elif isinstance(transforms, str):
         transform_lst = [Transform.from_string(transforms)]
     elif isinstance(transforms, list):
-        transform_lst = ''
+        transform_lst = []
+        print(str(transform_lst))
+        print(type(transform_lst))
         for tr in transforms:
-            if isinstance(transforms, TransformParam):
-                transform_lst = transform_lst.append(tr)
-            elif isinstance(transforms, str):
-                transform_lst = transform_lst.append(
-                    Transform.from_string(tr))
+            if isinstance(tr, TransformParam):
+                transform_lst.append(tr)
+            elif isinstance(tr, str):
+                transform_lst.append(Transform.from_string(tr))
             else:
                 raise TypeError('transforms can either be a Transform object,'
-                                'a string or a list of Transform or strings')
+                                ' a string or a list of Transform or strings')
     else:
         raise TypeError('transforms can either be a Transform object,'
-                        'a string or a list of Transform or strings')
+                        ' a string or a list of Transform or strings')
 
     transforms_str = ' '.join([tr.get_str() for tr in transform_lst])
 
@@ -1692,12 +1631,12 @@ def ants_registration(transforms,
                 if os.path.exists(init_tr_path):
                     init_transform_str = init_transform
                 else:
-                    raise ValueError(init_tr_path + "does not exist")
+                    raise ValueError(init_tr_path + " does not exist")
             else:
-                raise ValueError(init_transform + "does not have the right"
+                raise ValueError(init_transform + " does not have the right"
                                                   "format")
         else:
-            raise ValueError(str(init_transform) + "does not have the right"
+            raise ValueError(str(init_transform) + " does not have the right"
                                                    "format")
 
         init_transform_str = ' '.join(["--initial-moving-transform",
@@ -1735,15 +1674,93 @@ def ants_registration(transforms,
 
     return command
 
+
+fixed_path = '/Users/cf27246/test/MNI152_T1_3mm_brain.nii.gz'
+moving_path = '/Users/cf27246/test/test_fmri_mean.nii.gz'
+
+m0 = Metric('CC', 1, 4)
+print(m0.is_complete())
+m0.complete(fixed_path, moving_path)
+print(m0.is_complete())
+print(m0.get_str())
+
+m1 = Metric.complete_metric('CC', fixed_path, moving_path, 1, 4)
+print(m1.is_complete())
+print(m1.get_str())
+
+m2 = Metric.from_string('CC[' + ','.join([fixed_path, moving_path, '1, 4]']))
+print(m2.is_complete())
+print(m2.get_str())
+
+m3 = Metric.from_string('CC[1, 4]')
+print(m3.is_complete())
+m3.complete(fixed_path, moving_path)
+print(m3.is_complete())
+print(m3.get_str())
+
+
+t1 = Transform('Rigid', 0.1)
+print(t1.get_str())
+
+t2 = Transform.from_string('Rigid[0.1]')
+print(t2.get_str())
+
+fixed_path = '/Users/cf27246/test/MNI152_T1_3mm_brain.nii.gz'
+moving_path = '/Users/cf27246/test/test_fmri_mean.nii.gz'
+
+m0 = Metric('CC', 1, 4)
+
+m1 = Metric.complete_metric('CC', fixed_path, moving_path, 1, 4)
+
+m2 = Metric.from_string('CC[' + ','.join([fixed_path, moving_path, '1, 4]']))
+
+m3 = Metric.from_string('CC[1, 4]')
+
+tp0 = TransformParam(t1, m0, '[1000x500x250x100,1e-08,10]',
+                     [8,4,2,1], [3,2,1,0])
+print(tp0.is_complete())
+tp0.complete(fixed_path, moving_path)
+print(tp0.is_complete())
+print(m0.is_complete())
+print(tp0.get_str())
+
+tp1 = TransformParam(t1, m1, '[1000x500x250x100,1e-08,10]',
+                     [8,4,2,1], [3,2,1,0])
+print(tp1.is_complete())
+print(tp1.get_str())
+
+tp2 = TransformParam(t2, m2, '[1000x500x250x100,1e-08,10]',
+                     [8,4,2,1], [3,2,1,0])
+print(tp2.is_complete())
+print(tp2.get_str())
+
+tp3 = TransformParam(t2, m3, '[1000x500x250x100,1e-08,10]',
+                     [8, 4, 2, 1], [3 ,2 ,1 ,0])
+print(tp3.is_complete())
+tp3.complete(fixed_path, moving_path)
+print(tp3.is_complete())
+print(tp3.get_str())
+
+
 im1 = '/Users/cf27246/test/ants_reg/test_linear/median_sub-0027251_ses-1_' \
       'task-msit_run-1_bold.nii.gz'
 template = '/Users/cf27246/test/ants_reg/test_linear/test_median_fmri.nii.gz'
 m11 = Metric.complete_metric('CC', template, im1, 1, 4)
-tp1 = TransformParam(t1, m11, '[100,1e-06,10]',
-                     [1], [0])
-print(tp1.is_complete())
-print(tp1.get_str())
-regcmd = ants_registration(tp1)
+tp11 = TransformParam(Transform('Rigid', 0.1),
+                      m11, '[100,1e-06,10]',
+                      [1], [0])
+tp22 = TransformParam(Transform('Affine', 0.1),
+                      m11, '[100,1e-06,10]',
+                      [1], [0])
+print(tp11.is_complete())
+print(tp11.get_str())
+print(tp22.is_complete())
+print(tp22.get_str())
+regcmd = ants_registration([tp11, tp22])
+
+titi_reg = AntsRegistration([tp11, tp22], template, template)
+os.system("echo '%s' | pbcopy" % titi_reg.get_str())
+
 os.system("echo '%s' | pbcopy" % regcmd)
 subprocess.check_output(regcmd)
 # with open(command_file, 'wt') as f:
