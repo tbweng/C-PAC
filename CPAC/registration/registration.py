@@ -371,6 +371,96 @@ def create_register_func_to_anat(fieldmap_distortion=False,
     return register_func_to_anat
 
 
+def create_register_asl_to_anat(fieldmap_distortion=False,
+                                 name='register_asl_to_anat'):
+    """
+    Registers a functional scan in native space to anatomical space using a
+    linear transform and does not include bbregister.
+
+    Parameters
+    ----------
+    fieldmap_distortion : bool, optional
+        If field map-based distortion correction is being run, FLIRT should
+        take in the appropriate field map-related inputs.
+    name : string, optional
+        Name of the workflow.
+
+    Returns
+    -------
+    create_register_func_to_anat : nipype.pipeline.engine.Workflow
+
+    Notes
+    -----
+
+    Workflow Inputs::
+
+        inputspec.func : string (nifti file)
+            Input functional scan to be registered to anatomical space
+        inputspec.anat : string (nifti file)
+            Corresponding anatomical scan of subject
+        inputspec.interp : string
+            Type of interpolation to use ('trilinear' or 'nearestneighbour' or 'sinc')
+
+    Workflow Outputs::
+
+        outputspec.func_to_anat_linear_xfm_nobbreg : string (mat file)
+            Affine transformation from functional to anatomical native space
+        outputspec.anat_func_nobbreg : string (nifti file)
+            Functional scan registered to anatomical space
+
+    """
+
+    register_asl_to_anat = pe.Workflow(name=name)
+
+    inputspec = pe.Node(util.IdentityInterface(fields=['asl',
+                                                       'anat',
+                                                       'interp',
+                                                       'fieldmap',
+                                                       'fieldmapmask']),
+                        name='inputspec')
+
+    inputNode_echospacing = pe.Node(
+        util.IdentityInterface(fields=['echospacing']),
+        name='echospacing_input')
+
+    inputNode_pedir = pe.Node(util.IdentityInterface(fields=['pedir']),
+                              name='pedir_input')
+
+    outputspec = pe.Node(util.IdentityInterface(fields=['asl_to_anat_linear_xfm_nobbreg',
+                                                        'anat_asl_nobbreg']),
+                         name='outputspec')
+
+    linear_reg = pe.Node(interface=fsl.FLIRT(),
+                         name='linear_asl_to_anat')
+    linear_reg.inputs.cost = 'corratio'
+    linear_reg.inputs.dof = 6
+
+    if fieldmap_distortion:
+        register_asl_to_anat.connect(inputNode_pedir, 'pedir',
+                                      linear_reg, 'pedir')
+        register_asl_to_anat.connect(inputspec, 'fieldmap',
+                                      linear_reg, 'fieldmap')
+        register_asl_to_anat.connect(inputspec, 'fieldmapmask',
+                                      linear_reg, 'fieldmapmask')
+        register_asl_to_anat.connect(inputNode_echospacing, 'echospacing',
+                                      linear_reg, 'echospacing')
+
+    register_asl_to_anat.connect(inputspec, 'asl', linear_reg, 'in_file')
+
+    register_asl_to_anat.connect(inputspec, 'anat', linear_reg, 'reference')
+
+    register_asl_to_anat.connect(inputspec, 'interp', linear_reg, 'interp')
+
+    register_asl_to_anat.connect(linear_reg, 'out_matrix_file',
+                              outputspec,
+                              'func_to_anat_linear_xfm_nobbreg')
+
+    register_asl_to_anat.connect(linear_reg, 'out_file',
+                              outputspec, 'anat_asl_nobbreg')
+
+    return register_asl_to_anat
+
+
 def create_bbregister_func_to_anat(fieldmap_distortion=False,
                                    name='bbregister_func_to_anat'):
   
@@ -496,7 +586,133 @@ def create_bbregister_func_to_anat(fieldmap_distortion=False,
                                  outputspec, 'anat_func')
     
     return register_bbregister_func_to_anat
-    
+
+
+def create_bbregister_asl_to_anat(fieldmap_distortion=False,
+                                   name='bbregister_asl_to_anat'):
+    """
+    Registers a functional scan in native space to structural.  This is meant to be used 
+    after create_nonlinear_register() has been run and relies on some of it's outputs.
+
+    Parameters
+    ----------
+    fieldmap_distortion : bool, optional
+        If field map-based distortion correction is being run, FLIRT should
+        take in the appropriate field map-related inputs.
+    name : string, optional
+        Name of the workflow.
+
+    Returns
+    -------
+    register_func_to_anat : nipype.pipeline.engine.Workflow
+
+    Notes
+    -----
+
+    Workflow Inputs::
+
+        inputspec.func : string (nifti file)
+            Input functional scan to be registered to MNI space
+        inputspec.anat_skull : string (nifti file)
+            Corresponding full-head scan of subject
+        inputspec.linear_reg_matrix : string (mat file)
+            Affine matrix from linear functional to anatomical registration
+        inputspec.anat_wm_segmentation : string (nifti file)
+            White matter segmentation probability mask in anatomical space
+        inputspec.bbr_schedule : string (.sch file)
+            Boundary based registration schedule file for flirt command
+
+    Workflow Outputs::
+
+        outputspec.func_to_anat_linear_xfm : string (mat file)
+            Affine transformation from functional to anatomical native space
+        outputspec.anat_func : string (nifti file)
+            Functional data in anatomical space
+
+    """
+
+    register_bbregister_asl_to_anat = pe.Workflow(name=name)
+
+    inputspec = pe.Node(util.IdentityInterface(fields=['asl',
+                                                       'anat_skull',
+                                                       'linear_reg_matrix',
+                                                       'anat_wm_segmentation',
+                                                       'bbr_schedule',
+                                                       'fieldmap',
+                                                       'fieldmapmask'
+                                                       ]),
+                        name='inputspec')
+
+    inputNode_echospacing = pe.Node(
+        util.IdentityInterface(fields=['echospacing']),
+        name='echospacing_input')
+
+    inputNode_pedir = pe.Node(util.IdentityInterface(fields=['pedir']),
+                              name='pedir_input')
+
+    outputspec = pe.Node(util.IdentityInterface(fields=['asl_to_anat_linear_xfm',
+                                                        'anat_asl']),
+                         name='outputspec')
+
+    wm_bb_mask = pe.Node(interface=fsl.ImageMaths(),
+                         name='wm_bb_mask')
+    wm_bb_mask.inputs.op_string = '-thr 0.5 -bin'
+
+    register_bbregister_asl_to_anat.connect(inputspec, 'anat_wm_segmentation',
+                                             wm_bb_mask, 'in_file')
+
+    def bbreg_args(bbreg_target):
+        return '-cost bbr -wmseg ' + bbreg_target
+
+    bbreg_asl_to_anat = pe.Node(interface=fsl.FLIRT(),
+                                 name='bbreg_asl_to_anat')
+    bbreg_asl_to_anat.inputs.dof = 6
+
+    register_bbregister_asl_to_anat.connect(inputspec, 'bbr_schedule',
+                                             bbreg_asl_to_anat, 'schedule')
+
+    register_bbregister_asl_to_anat.connect(wm_bb_mask, ('out_file', bbreg_args),
+                                             bbreg_asl_to_anat, 'args')
+
+    register_bbregister_asl_to_anat.connect(inputspec, 'asl',
+                                             bbreg_asl_to_anat, 'in_file')
+
+    register_bbregister_asl_to_anat.connect(inputspec, 'anat_skull',
+                                             bbreg_asl_to_anat, 'reference')
+
+    register_bbregister_asl_to_anat.connect(inputspec, 'linear_reg_matrix',
+                                             bbreg_asl_to_anat, 'in_matrix_file')
+
+    if fieldmap_distortion:
+
+        def convert_pedir(pedir):
+            # FSL Flirt requires pedir input encoded as an int
+            conv_dct = {'x': 1, 'y': 2, 'z': 3, '-x': -1, '-y': -2, '-z': -3}
+            if not isinstance(pedir, str):
+                raise Exception("\n\nPhase-encoding direction must be a "
+                                "string value.\n\n")
+            if pedir not in conv_dct.keys():
+                raise Exception("\n\nInvalid phase-encoding direction "
+                                "entered: {0}\n\n".format(pedir))
+            return conv_dct[pedir]
+
+        register_bbregister_asl_to_anat.connect(inputNode_pedir, ('pedir', convert_pedir),
+                                                 bbreg_asl_to_anat, 'pedir')
+        register_bbregister_asl_to_anat.connect(inputspec, 'fieldmap',
+                                                 bbreg_asl_to_anat, 'fieldmap')
+        register_bbregister_asl_to_anat.connect(inputspec, 'fieldmapmask',
+                                                 bbreg_asl_to_anat, 'fieldmapmask')
+        register_bbregister_asl_to_anat.connect(inputNode_echospacing, 'echospacing',
+                                                 bbreg_asl_to_anat, 'echospacing')
+
+    register_bbregister_asl_to_anat.connect(bbreg_asl_to_anat, 'out_matrix_file',
+                                             outputspec, 'asl_to_anat_linear_xfm')
+
+    register_bbregister_asl_to_anat.connect(bbreg_asl_to_anat, 'out_file',
+                                             outputspec, 'anat_asl')
+
+    return register_bbregister_asl_to_anat
+
 
 def create_wf_calculate_ants_warp(name='create_wf_calculate_ants_warp', num_threads=1):
 

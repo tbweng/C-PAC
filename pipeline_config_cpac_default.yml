@@ -13,7 +13,7 @@ runOnGrid :  False
 
 # Full path to the FSL version to be used by CPAC.
 # If you have specified an FSL path in your .bashrc file, this path will be set automatically.
-FSLDIR :  /usr/share/fsl/5.0
+FSLDIR :  /usr/share/fsl/6.0
 
 
 # Sun Grid Engine (SGE), Portable Batch System (PBS), or Simple Linux Utility for Resource Management (SLURM).
@@ -374,7 +374,7 @@ runRegisterFuncToAnat :  [1]
 runBBReg :  [1]
 
 
-# Standard FSL 5.0 Scheduler used for Boundary Based Registration.
+# Standard FSL 6.0 Scheduler used for Boundary Based Registration.
 # It is not necessary to change this path unless you intend to use non-standard MNI registration.
 boundaryBasedRegistrationSchedule :  $FSLDIR/etc/flirtsch/bbr.sch
 

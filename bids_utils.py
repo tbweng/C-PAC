@@ -428,7 +428,6 @@ def bids_gen_cpac_sublist(bids_dir, paths_list, config_dict, creds_path, dbg=Fal
             if "asl" in f_dict["scantype"]:
                 task_key = f_dict["task"]
                 task_key = "_".join([task_key, "acq-asl"])
-                print task_key
                 if "run" in f_dict:
                     task_key = "_".join([task_key,
                                          "-".join(["run", f_dict["run"]])])
@@ -436,16 +435,16 @@ def bids_gen_cpac_sublist(bids_dir, paths_list, config_dict, creds_path, dbg=Fal
                     task_key = "_".join([task_key,
                                          "-".join(["acq", f_dict["acq"]])])
                 if "asl" not in subdict[f_dict["sub"]][f_dict["ses"]]:
-                    subdict[f_dict["sub"]][f_dict["ses"]]["asl"] = {}
+                    subdict[f_dict["sub"]][f_dict["ses"]]["func"] = {}
 
                 if task_key not in \
-                        subdict[f_dict["sub"]][f_dict["ses"]]["asl"]:
+                        subdict[f_dict["sub"]][f_dict["ses"]]["func"]:
 
-                    subdict[f_dict["sub"]][f_dict["ses"]]["asl"][task_key] = task_info
+                    subdict[f_dict["sub"]][f_dict["ses"]]["func"][task_key] = task_info
 
                 else:
                     print("ASL file (%s)" %
-                          subdict[f_dict["sub"]][f_dict["ses"]]["asl"][task_key] +
+                          subdict[f_dict["sub"]][f_dict["ses"]]["func"][task_key] +
                           " already found for ( % s: %s: % s) discarding % s" % (
                               f_dict["sub"],
                               f_dict["ses"],

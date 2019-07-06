@@ -213,15 +213,14 @@ def create_seg_preproc(use_ants, wf_name ='seg_preproc'):
                                                         'mixeltype',
                                                         'partial_volume_map',
                                                         'partial_volume_files',
-                                                        'wm_mask',
-                                                        'out_prefix']),
+                                                        'wm_mask']),
                         name='outputspec')
 
     segment = pe.Node(interface=fsl.FAST(), name='segment', mem_gb=1.5)
     segment.inputs.img_type = 1
     segment.inputs.segments = True
     segment.inputs.probability_maps = True
-    segment.inputs.out_basename = 'segment'
+    segment.inputs.out_basename = 'fast_'
 
     check_wm = pe.Node(name='check_wm', interface=Function(function=check_if_file_is_empty, input_names=['in_file'], output_names=['out_file']))
     check_gm = pe.Node(name='check_gm', interface=Function(function=check_if_file_is_empty, input_names=['in_file'], output_names=['out_file']))
@@ -239,9 +238,7 @@ def create_seg_preproc(use_ants, wf_name ='seg_preproc'):
                     outputNode, 'partial_volume_files')
     preproc.connect(segment, 'partial_volume_map',
                     outputNode, 'partial_volume_map')
-    # retrieve out_prefix
-    preproc.connect(segment, 'out_basename',
-                    outputNode, 'out_prefix')
+
 
     ##get binarize thresholded csf mask
     process_csf = process_segment_map('CSF', use_ants)
