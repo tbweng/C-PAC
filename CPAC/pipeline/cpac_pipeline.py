@@ -163,7 +163,7 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
         list of pipeline info for reporting timing information
     p_name : string (optional); default=None
         name of pipeline
-    plugin : string (optional); defaule='MultiProc'
+    plugin : string (optional); default='MultiProc'
         nipype plugin to utilize when the workflow is ran
     plugin_args : dictionary (optional); default=None
         plugin-specific arguments for the workflow plugin

@@ -1874,7 +1874,7 @@ class AntsRegistration(object):
         # calculate norm
         if self.is_complete():
             try:
-                retcode = subprocess.check_output(self.get_str(),shell=True)
+                retcode = subprocess.check_output(self.get_str(), shell=True)
             except Exception as e:
                 raise Exception(
                     '[!] ANTS registration did not complete successfully.'

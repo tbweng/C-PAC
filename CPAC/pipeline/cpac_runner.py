@@ -175,7 +175,7 @@ def run_cpac_on_cluster(config_file, subject_list_file,
     out = commands.getoutput('%s %s' % (exec_cmd, batch_filepath))
 
     # Check for successful qsub submission
-    if re.search(confirm_str, out) == None:
+    if re.search(confirm_str, out) is None:
         err_msg = 'Error submitting C-PAC pipeline run to %s queue' \
                   % job_scheduler
         raise Exception(err_msg)
