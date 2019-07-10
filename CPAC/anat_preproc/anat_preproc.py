@@ -81,14 +81,15 @@ def create_anat_preproc(method='afni', already_skullstripped=False,
     """
 
     preproc = pe.Workflow(name=wf_name)
-
+    # template_cmass is a tuple of the coordinates of template's center of mass
     inputnode = pe.Node(util.IdentityInterface(
-        fields=['anat', 'brain_mask']), name='inputspec')
+        fields=['anat', 'brain_mask', 'template_cmass']), name='inputspec')
 
     outputnode = pe.Node(util.IdentityInterface(fields=['refit',
                                                         'reorient',
                                                         'skullstrip',
-                                                        'brain']),
+                                                        'brain',
+                                                        'center_of_mass']),
                          name='outputspec')
 
     anat_deoblique = pe.Node(interface=afni.Refit(),
@@ -105,7 +106,13 @@ def create_anat_preproc(method='afni', already_skullstripped=False,
     anat_reorient.inputs.orientation = 'RPI'
     anat_reorient.inputs.outputtype = 'NIFTI_GZ'
     preproc.connect(anat_deoblique, 'out_file', anat_reorient, 'in_file')
-    preproc.connect(anat_reorient, 'out_file', outputnode, 'reorient')
+
+    anat_align_cmass = afni.CenterMass()
+    preproc.connect(anat_reorient, 'out_file', anat_align_cmass, 'in_file')
+    preproc.connect(inputnode, 'template_cmass', anat_align_cmass, 'set_cm')
+    preproc.connect(anat_align_cmass, 'cm', outputnode, 'center_of_mass')
+    # Just add the alignment to the output image
+    preproc.connect(anat_align_cmass, 'out_file', outputnode, 'reorient')
 
     if not already_skullstripped:
 
@@ -198,7 +205,7 @@ def create_anat_preproc(method='afni', already_skullstripped=False,
 
             anat_skullstrip.inputs.outputtype = 'NIFTI_GZ'
 
-            preproc.connect(anat_reorient, 'out_file',
+            preproc.connect(anat_align_cmass, 'out_file',
                             anat_skullstrip, 'in_file')
             preproc.connect(skullstrip_args, 'expr',
                             anat_skullstrip, 'args')
@@ -226,7 +233,7 @@ def create_anat_preproc(method='afni', already_skullstripped=False,
             anat_skullstrip = pe.Node(
                 interface=fsl.BET(), name='anat_skullstrip')
 
-            preproc.connect(anat_reorient, 'out_file',
+            preproc.connect(anat_align_cmass, 'out_file',
                             anat_skullstrip, 'in_file')
 
             preproc.connect(inputnode_bet, 'frac',
@@ -259,6 +266,8 @@ def create_anat_preproc(method='afni', already_skullstripped=False,
             preproc.connect(anat_skullstrip, 'out_file',
                             outputnode, 'skullstrip')
 
+        # There is no 'else' here.
+
         # Apply skull-stripping step mask to original volume
         anat_skullstrip_orig_vol = pe.Node(interface=afni.Calc(),
                                            name='anat_skullstrip_orig_vol')
@@ -266,7 +275,7 @@ def create_anat_preproc(method='afni', already_skullstripped=False,
         anat_skullstrip_orig_vol.inputs.expr = 'a*step(b)'
         anat_skullstrip_orig_vol.inputs.outputtype = 'NIFTI_GZ'
 
-        preproc.connect(anat_reorient, 'out_file',
+        preproc.connect(anat_align_cmass, 'out_file',
                         anat_skullstrip_orig_vol, 'in_file_a')
 
         if method == 'mask':

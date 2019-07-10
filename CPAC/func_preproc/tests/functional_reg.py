@@ -16,6 +16,7 @@ import nibabel as nib
 import nipype.pipeline.engine as pe
 import nipype.interfaces.utility as util
 import nipype.interfaces.fsl as fsl
+from nipype.interfaces import afni
 from nipype import MapNode
 # from dipy.align.imaffine import (transform_centers_of_mass,
 #                                  MutualInformationMetric,
@@ -159,6 +160,177 @@ def init_robust_template(wf_name='init_robust'):
     return init_template
 
 
+def transform_centers_of_mass(static, static_grid2world,
+                              moving, moving_grid2world):
+    """ Function from DIPY: https://github.com/nipy/dipy
+    http://nipy.org/dipy/reference/dipy.align.html
+    Transformation to align the center of mass of the input images
+    Parameters
+    ----------
+    static : array, shape (S, R, C)
+        static image
+    static_grid2world : array, shape (dim+1, dim+1)
+        the voxel-to-space transformation of the static image
+    moving : array, shape (S, R, C)
+        moving image
+    moving_grid2world : array, shape (dim+1, dim+1)
+        the voxel-to-space transformation of the moving image
+    Returns
+    -------
+    affine_map : instance of AffineMap
+        the affine transformation (translation only, in this case) aligning
+        the center of mass of the moving image towards the one of the static
+        image
+    """
+    from scipy import ndimage
+    dim = len(static.shape)
+    if static_grid2world is None:
+        static_grid2world = np.eye(dim + 1)
+    if moving_grid2world is None:
+        moving_grid2world = np.eye(dim + 1)
+    c_static = ndimage.measurements.center_of_mass(np.array(static))
+    c_static = static_grid2world.dot(c_static + (1,))
+    c_moving = ndimage.measurements.center_of_mass(np.array(moving))
+    c_moving = moving_grid2world.dot(c_moving + (1,))
+    transform = np.eye(dim + 1)
+    transform[:dim, dim] = (c_moving - c_static)[:dim]
+    # affine_map = AffineMap(transform,
+    #                        static.shape, static_grid2world,
+    #                        moving.shape, moving_grid2world)
+    return transform
+
+
+def align_centers(image, ref_image):
+    out_file = 'cmass_align_' + str(os.path.basename(image))
+    align = ['@Align_Centers',
+             '-base',
+             ref_image,
+             ' -dset',
+             image,
+             '-prefix',
+             out_file,
+             ' -cm']
+
+    try:
+        retcode = subprocess.check_output(align)
+    except Exception as e:
+        raise Exception(
+            '[!] ANTS registration did not complete successfully.'
+            '\n\nError details:\n{0}\n'.format(e))
+    return out_file, retcode
+
+
+def image_preproc(image, ref=None, resample_mode='NN'):
+    wf = pe.Workflow(name=image + '_longitudinal_preproc')
+    inputnode = pe.Node(util.IdentityInterface(
+        fields=['image', 'ref']), name='inputspec')
+
+    outputnode = pe.Node(util.IdentityInterface(fields=['refit',
+                                                        'reorient',
+                                                        'align']),
+                         name='outputspec')
+    deoblique = pe.Node(interface=afni.Refit(),
+                        name='deoblique')
+    deoblique.inputs.deoblique = True
+    wf.connect(inputnode, 'anat', deoblique, 'in_file')
+    wf.connect(deoblique, 'out_file', outputnode, 'refit')
+    reorient = pe.Node(interface=afni.Resample(),
+                       name='reorient')
+
+    reorient.inputs.orientation = 'RPI'
+    reorient.inputs.outputtype = 'NIFTI_GZ'
+    # align the images' grid to the highest resolution of the dataset
+    reorient.inputs.master = ref
+    reorient.inputs.resample_mode = resample_mode
+    wf.connect(deoblique, 'out_file', reorient, 'in_file')
+
+
+    align_import = ['import subprocess']
+    align_centers = pe.Node(interface=util.Function(input_names=['input_image',
+                                                                 'ref_image'],
+                                                    output_names=['out_file',
+                                                                  'retcode'],
+                                                    imports=align_import),
+                            name='align_centers')
+    wf.connect(reorient, 'out_file', align_centers, 'input_image')
+    wf.connect(reorient, 'out_file', align_centers, 'input_image')
+
+    return wf
+
+
+def init_images_list(img_list, resample_mode='NN', thread_pool=2):
+    """
+
+    *****If init is True*****
+    Homogenize the images:
+    -deobliquing
+    -reorienting
+    -resampling to the highest resolution of the dataset
+    -aligning all the images together (setting the center of mass of the brain
+    at 0,0,0)
+    Parameters
+    ----------
+    img_list
+
+    Returns
+    -------
+
+    """
+    if isinstance(thread_pool, int):
+        pool = ThreadPool(thread_pool)
+    else:
+        pool = thread_pool
+    # index of the image with the highest resolution (based on voxel size)
+    idx_max = np.argmax(
+        [np.prod(nib.load(img).header['pixdim'][1:4]) for img in img_list]
+    )[0]
+    wf_list = [pe.Workflow(
+        name=img+'_longitudinal_preproc') for img in img_list]
+
+    for wf in wf_list:
+        inputnode = pe.Node(util.IdentityInterface(
+            fields=['anat']), name='inputspec')
+
+        outputnode = pe.Node(util.IdentityInterface(fields=['refit',
+                                                            'reorient',
+                                                            'brain']),
+                             name='outputspec')
+        deoblique = pe.Node(interface=afni.Refit(),
+                            name='deoblique')
+        deoblique.inputs.deoblique = True
+        wf.connect(inputnode, 'anat', deoblique, 'in_file')
+        wf.connect(deoblique, 'out_file', outputnode, 'refit')
+        reorient = pe.Node(interface=afni.Resample(),
+                           name='reorient')
+
+        reorient.inputs.orientation = 'RPI'
+        reorient.inputs.outputtype = 'NIFTI_GZ'
+        # align the images' grid to the highest resolution of the dataset
+        reorient.inputs.master = img_list[idx_max]
+        reorient.inputs.resample_mode = resample_mode
+        wf.connect(deoblique, 'out_file', reorient, 'in_file')
+        wf.connect(reorient, 'out_file', outputnode, 'reorient')
+
+        align = ['-base ', img_list[idx_max], ' -dset -cm']
+
+        try:
+            retcode = subprocess.check_output('@Align_Centers', shell=True)
+        except Exception as e:
+            raise Exception(
+                '[!] ANTS registration did not complete successfully.'
+                '\n\nError details:\n{0}\n'.format(e))
+        return retcode
+        # align_epi_anat.py - dset1 / Users / cf27246 / test /
+        # test_msit_median_resamp.nii.gz - dset2 / Users / cf27246 / test /\
+        # test_rest_median_resamp.nii.gz - cmass
+        # cmass - suffix
+        # _align.nii.gz
+
+
+
+
+
+
 def create_temporary_template(img_list, out_path, avg_method='median'):
     """
     Average all the 3D images of the list into one 3D image
@@ -180,6 +352,8 @@ def create_temporary_template(img_list, out_path, avg_method='median'):
 
     if len(img_list) == 1:
         return img_list[0]
+
+    # ALIGN CENTERS
 
     avg_data = getattr(np, avg_method)(
         np.asarray([nifti_image_input(img).get_data() for img in img_list]), 0)
@@ -278,12 +452,17 @@ def register_img_list(img_list, ref_img, output_folder, dof=12,
         ('mutualinfo' or 'corratio' (default) or 'normcorr' or 'normmi' or
          'leastsq' or 'labeldiff' or 'bbr')
         cost function
+    thread_pool: int or multiprocessing.dummy.Pool
+        (default 2) number of threads. You can also provide a Pool so the
+        node will be added to it to be run.
 
     Returns
     -------
     multiple_linear_reg: list of Node
-        outputs.out_file will contain the registered images
-        outputs.out_matrix_file will contain the transformation matrices
+        each Node 'node' has been run and
+        node.inputs.out_file contains the path to the registered image
+        node.inputs.out_matrix_file contains the path to the transformation
+        matrix
     """
     if not img_list:
         raise ValueError('ERROR register_img_list: image list is empty')
@@ -421,7 +600,7 @@ def template_creation_flirt(img_list, output_folder,
         list of images paths
     output_folder: str
         path to the output folder (the folder must already exist)
-    init_reg: list of Node
+    init_reg: list of Node or str
         (default None so no initial registration is performed)
         the output of the function register_img_list with another reference
         Reuter et al. 2012 (NeuroImage) section "Improved template estimation"
@@ -445,6 +624,9 @@ def template_creation_flirt(img_list, output_folder,
         (numpy.finfo(np.float64).eps (default)) threshold for the convergence
         The threshold is how different from no transformation is the
         transformation matrix.
+    thread_pool: int or multiprocessing.dummy.Pool
+        (default 2) number of threads. You can also provide a Pool so the
+        node will be added to it to be run.
 
     Returns
     -------
@@ -461,18 +643,22 @@ def template_creation_flirt(img_list, output_folder,
         print('ERROR create_temporary_template: image list is empty')
 
     if init_reg is not None:
-        image_list = [node.inputs.out_file for node in init_reg]
-        mat_list = [node.inputs.out_matrix_file for node in init_reg]
-        # test if every transformation matrix has reached the convergence
-        convergence_list = [template_convergence(
-            mat, mat_type, convergence_threshold) for mat in mat_list]
-        converged = all(convergence_list)
+        if isinstance(init_reg, list):
+            image_list = [node.inputs.out_file for node in init_reg]
+            mat_list = [node.inputs.out_matrix_file for node in init_reg]
+            # test if every transformation matrix has reached the convergence
+            convergence_list = [template_convergence(
+                mat, mat_type, convergence_threshold) for mat in mat_list]
+            converged = all(convergence_list)
+        if isinstance(init_reg, six.string_types):
+            if init_reg == 'center':
+                print('todo')
     else:
         image_list = img_list
         converged = False
 
     tmp_template = os.path.join(output_folder, 'tmp_template.nii.gz')
-    # file1 = open("/Users/cf27246/convergence_test.txt", "w")  # write mode
+
     while not converged:
         tmp_template = create_temporary_template(image_list,
                                                  out_path=tmp_template,
@@ -492,20 +678,67 @@ def template_creation_flirt(img_list, output_folder,
             mat, mat_type, convergence_threshold) for mat in mat_list]
         converged = all(convergence_list)
 
-    #     # DEBUG
-    #     norms = [read_mat(mat) for mat in mat_list]
-    #     mean_distance = np.mean(np.array([norm_transformations(tr, oth)
-    #                                       for (tr, oth) in norms]))
-    #     print("Average matrices distance " + str(mean_distance))
-    #     file1.write("Average matrices distance" +
-    #                 str(mean_distance) + "\n")
-    # file1.close()
-
     if isinstance(thread_pool, int):
         pool.close()
         pool.join()
 
     template = tmp_template
+    return template
+
+
+def longitudinal_template(img_list, output_folder,
+                            init_reg=None, avg_method='median', dof=12,
+                            interp='trilinear', cost='corratio',
+                            mat_type='matrix',
+                            convergence_threshold=np.finfo(np.float64).eps,
+                            thread_pool=2, method='flirt'):
+    """
+
+    Parameters
+    ----------
+    img_list
+    output_folder
+    init_reg
+    avg_method
+    dof
+    interp
+    cost
+    mat_type
+    convergence_threshold
+    thread_pool
+    method
+
+    Returns
+    -------
+
+    Algorithm
+    ---------
+    Homogenize the images:
+    -deobliquing
+    -reorienting
+    -resampling to the highest resolution of the dataset
+    -aligning all the images together (setting the center of mass of the brain
+    at 0,0,0)
+    Selection of the first target to register the images:
+    -either select an image randomly (faster) or average (default median) the
+    images and use this average as target.
+
+
+    """
+    if method == 'flirt':
+        # align the images together
+        node_list = register_img_list(img_list, ref_img, output_folder, dof=12,
+                      interp='trilinear', cost='corratio', thread_pool=2)
+        template = template_creation_flirt(img_list, output_folder,
+                                           init_reg, avg_method, dof,
+                                           interp, cost,
+                                           mat_type,
+                                           convergence_threshold,
+                                           thread_pool)
+    else:
+        raise ValueError(str(method)
+                         + 'this method has not yet been implemented')
+
     return template
 
 
@@ -1332,15 +1565,6 @@ class Transform(object):
         return self.__out_str
 
 
-'''--transform Rigid[0.1] --metric MI[$t1brain,$template,1,32,Regular,0.25] \  
-        --convergence [1000x500x250x100,1e-6,10] \  
-        --shrink-factors 8x4x2x1 \  
-        --smoothing-sigmas 3x2x1x0vox \
-        
-        level_iters=[10000, 1000, 100],
-                           sigmas=[3.0, 1.0, 0.0],
-                           factors=[4, 2, 1]
-'''
 def x_str(*args):
     """
     Convert a list of parameters into a string with the format:
