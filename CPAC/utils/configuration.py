@@ -1,11 +1,11 @@
 import os
 import warnings
 
-"""
-Class to set dictionary keys as map attributes
-"""
-class Configuration(object):
 
+class Configuration(object):
+    """
+    Class to set dictionary keys as map attributes
+    """
     def __init__(self, config_map):
         for key in config_map:
             if config_map[key] == 'None':
@@ -18,6 +18,13 @@ class Configuration(object):
                         config_map[key] = os.environ['FSLDIR']
             setattr(self, key, config_map[key])
         self.__update_attr()
+        self.__pipeline_start_time = None
+
+    def get_pipeline_start_time(self):
+        return self.__pipeline_start_time
+
+    def set_pipeline_start_time(self, start_time):
+        self.__pipeline_start_time = start_time
 
     def return_config_elements(self):
         # this returns a list of tuples

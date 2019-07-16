@@ -220,40 +220,12 @@ def align_centers(image, ref_image):
     return out_file, retcode
 
 
-def image_preproc(image, ref=None, resample_mode='NN'):
-    wf = pe.Workflow(name=image + '_longitudinal_preproc')
-    inputnode = pe.Node(util.IdentityInterface(
-        fields=['image', 'ref']), name='inputspec')
-
-    outputnode = pe.Node(util.IdentityInterface(fields=['refit',
-                                                        'reorient',
-                                                        'align']),
-                         name='outputspec')
-    deoblique = pe.Node(interface=afni.Refit(),
-                        name='deoblique')
-    deoblique.inputs.deoblique = True
-    wf.connect(inputnode, 'anat', deoblique, 'in_file')
-    wf.connect(deoblique, 'out_file', outputnode, 'refit')
-    reorient = pe.Node(interface=afni.Resample(),
-                       name='reorient')
-
-    reorient.inputs.orientation = 'RPI'
-    reorient.inputs.outputtype = 'NIFTI_GZ'
-    # align the images' grid to the highest resolution of the dataset
-    reorient.inputs.master = ref
-    reorient.inputs.resample_mode = resample_mode
-    wf.connect(deoblique, 'out_file', reorient, 'in_file')
-
-
-    align_import = ['import subprocess']
-    align_centers = pe.Node(interface=util.Function(input_names=['input_image',
-                                                                 'ref_image'],
-                                                    output_names=['out_file',
-                                                                  'retcode'],
-                                                    imports=align_import),
-                            name='align_centers')
-    wf.connect(reorient, 'out_file', align_centers, 'input_image')
-    wf.connect(reorient, 'out_file', align_centers, 'input_image')
+def image_preproc(image, skull_strip_method='afni',
+                  already_skullstripped=False, wf_name='anat_preproc'):
+    from CPAC.anat_preproc import create_anat_preproc
+    wf = create_anat_preproc(method=skull_strip_method,
+                             already_skullstripped=already_skullstripped,
+                             wf_name=wf_name)
 
     return wf
 

@@ -382,6 +382,32 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
             'lesion_mask': (lesion_datasource, 'outputspec.anat')
         })
 
+    # if the image has already been registered with the longitudinal preproc
+    if 'reg_anat' in sub_dict.keys():
+        lesion_datasource = create_anat_datasource(
+            'reg_anat_gather_%d' % num_strat)
+        lesion_datasource.inputs.inputnode.subject = subject_id
+        lesion_datasource.inputs.inputnode.anat = sub_dict['reg_anat']
+        lesion_datasource.inputs.inputnode.creds_path = input_creds_path
+        lesion_datasource.inputs.inputnode.dl_dir = c.workingDirectory
+
+        strat_initial.update_resource_pool({
+            'reg_anat': (lesion_datasource, 'outputspec.anat')
+        })
+    # the longitudinal preproc will also output a local template specific to
+    # the subject
+    if 'local_template' in sub_dict.keys():
+        lesion_datasource = create_anat_datasource(
+            'local_template_gather_%d' % num_strat)
+        lesion_datasource.inputs.inputnode.subject = subject_id
+        lesion_datasource.inputs.inputnode.anat = sub_dict['local_template']
+        lesion_datasource.inputs.inputnode.creds_path = input_creds_path
+        lesion_datasource.inputs.inputnode.dl_dir = c.workingDirectory
+
+        strat_initial.update_resource_pool({
+            'local_template': (lesion_datasource, 'outputspec.anat')
+        })
+
     num_strat += 1
     strat_list.append(strat_initial)
 
