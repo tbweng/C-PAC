@@ -102,12 +102,12 @@ def create_anat_preproc(method='afni', already_skullstripped=False,
     # Anatomical reorientation
     anat_reorient = pe.Node(interface=afni.Resample(),
                             name='anat_reorient')
-
+    
     anat_reorient.inputs.orientation = 'RPI'
     anat_reorient.inputs.outputtype = 'NIFTI_GZ'
     preproc.connect(anat_deoblique, 'out_file', anat_reorient, 'in_file')
 
-    anat_align_cmass = afni.CenterMass()
+    anat_align_cmass = pe.Node(interface=afni.CenterMass(), name='cmass')
     preproc.connect(anat_reorient, 'out_file', anat_align_cmass, 'in_file')
     preproc.connect(inputnode, 'template_cmass', anat_align_cmass, 'set_cm')
     preproc.connect(anat_align_cmass, 'cm', outputnode, 'center_of_mass')

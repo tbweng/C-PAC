@@ -14,6 +14,8 @@ import yaml
 import time
 from time import strftime
 
+from CPAC.anat_preproc.longitudinal_workflow import anat_workflow
+
 
 # Validate length of directory
 def validate(config_obj):
@@ -250,6 +252,22 @@ def run(config_file, subject_list_file, p_name=None, plugin=None,
         print "Subject list is not in proper YAML format. Please check " \
               "your file"
         raise Exception
+
+    # BEGIN LONGITUDINAL TEMPLATE PIPELINE
+    if hasattr(c, 'longitudinal') and c.longitudinal:
+        subject_id_dict = {}
+        for sub in sublist:
+            if sub['subject_id'] in subject_id_dict:
+                subject_id_dict[sub['subject_id']].append(sub)
+            else:
+                subject_id_dict[sub['subject_id']] = [sub]
+        # subject_id_dict has the subject_id as keys and a list of sessions for
+        # each participant as value
+        # TODO LONG_REG modify it so the functions can be called in separated nodes
+        for sessions in subject_id_dict:
+            anat_workflow(sessions, c)
+
+    # END LONGITUDINAL TEMPLATE PIPELINE
 
     # Populate subject scan map
     sub_scan_map = {}

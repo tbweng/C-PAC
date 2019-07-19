@@ -15,6 +15,7 @@ from CPAC.utils.datasource import (
 )
 
 from CPAC.anat_preproc.anat_preproc import create_anat_preproc
+from CPAC.anat_preproc.longitudinal_preproc import longitudinal_template
 
 from CPAC.utils import Strategy, find_files
 
@@ -70,79 +71,21 @@ def init_subject_wf(sub_dict, conf):
 
     logging.update_logging(config)
 
-    return c
-
-
-def anat_workflow(sub_dict, c, run, pipeline_timing_info=None,
-                  p_name=None, plugin='MultiProc', plugin_args=None):
-    '''
-    Function to prepare and, optionally, run the C-PAC workflow
-
-    Parameters
-    ----------
-    sub_dict : dictionary
-        subject dictionary with anatomical and functional image paths
-    c : Configuration object
-        CPAC pipeline configuration dictionary object
-    run : boolean
-        flag to indicate whether to run the prepared workflow
-    pipeline_timing_info : list (optional); default=None
-        list of pipeline info for reporting timing information
-    p_name : string (optional); default=None
-        name of pipeline
-    plugin : string (optional); default='MultiProc'
-        nipype plugin to utilize when the workflow is ran
-    plugin_args : dictionary (optional); default=None
-        plugin-specific arguments for the workflow plugin
-
-    Returns
-    -------
-    workflow : nipype workflow
-        the prepared nipype workflow object containing the parameters
-        specified in the config
-    '''
-
-    # Import packages
-    from CPAC.utils.utils import check_config_resources, check_system_deps
-
-    # Assure that changes on config will not affect other parts
-    c = copy.copy(c)
-
-    subject_id = sub_dict['subject_id']
-    if sub_dict['unique_id']:
-        subject_id += "_" + sub_dict['unique_id']
-
-    log_dir = os.path.join(c.logDirectory, 'pipeline_%s' % c.pipelineName,
-                           subject_id)
-    if not os.path.exists(log_dir):
-        os.makedirs(os.path.join(log_dir))
-
-    # TODO ASH Enforce c.run_logging to be boolean
-    # TODO ASH Schema validation
-    config.update_config({
-        'logging': {
-            'log_directory': log_dir,
-            'log_to_file': bool(getattr(c, 'run_logging', True))
-        }
-    })
-
-    logging.update_logging(config)
-
     # Start timing here
     pipeline_start_time = time.time()
-    # at end of workflow, take timestamp again, take time elapsed and check
-    # tempfile add time to time data structure inside tempfile, and increment
-    # number of subjects
+    # TODO LONG_REG change prep_worflow to use this attribute instead of the local var
+    c.update('pipeline_start_time', pipeline_start_time)
 
     # Check pipeline config resources
     sub_mem_gb, num_cores_per_sub, num_ants_cores = \
         check_config_resources(c)
 
-    if plugin_args:
-        plugin_args['memory_gb'] = sub_mem_gb
-        plugin_args['n_procs'] = num_cores_per_sub
-    else:
-        plugin_args = {'memory_gb': sub_mem_gb, 'n_procs': num_cores_per_sub}
+    # TODO LONG_REG understand and handle that
+    # if plugin_args:
+    #     plugin_args['memory_gb'] = sub_mem_gb
+    #     plugin_args['n_procs'] = num_cores_per_sub
+    # else:
+    #     plugin_args = {'memory_gb': sub_mem_gb, 'n_procs': num_cores_per_sub}
 
     # perhaps in future allow user to set threads maximum
     # this is for centrality mostly
@@ -154,21 +97,21 @@ def anat_workflow(sub_dict, c, run, pipeline_timing_info=None,
 
     # calculate maximum potential use of cores according to current pipeline
     # configuration
-    max_core_usage = int(c.maxCoresPerParticipant) * \
-                     int(c.numParticipantsAtOnce)
+    max_core_usage = int(c.maxCoresPerParticipant) * int(
+        c.numParticipantsAtOnce)
 
     information = """
 
-    C-PAC version: {cpac_version}
+        C-PAC version: {cpac_version}
 
-    Setting maximum number of cores per participant to {cores}
-    Setting number of participants at once to {participants}
-    Setting OMP_NUM_THREADS to {threads}
-    Setting MKL_NUM_THREADS to {threads}
-    Setting ANTS/ITK thread usage to {ants_threads}
-    Maximum potential number of cores that might be used during this run: {max_cores}
+        Setting maximum number of cores per participant to {cores}
+        Setting number of participants at once to {participants}
+        Setting OMP_NUM_THREADS to {threads}
+        Setting MKL_NUM_THREADS to {threads}
+        Setting ANTS/ITK thread usage to {ants_threads}
+        Maximum potential number of cores that might be used during this run: {max_cores}
 
-"""
+    """
 
     logger.info(information.format(
         cpac_version=CPAC.__version__,
@@ -178,18 +121,6 @@ def anat_workflow(sub_dict, c, run, pipeline_timing_info=None,
         ants_threads=c.num_ants_threads,
         max_cores=max_core_usage
     ))
-
-    # TODO ASH temporary code, remove
-    # TODO ASH maybe scheme validation/normalization
-    already_skullstripped = c.already_skullstripped[0]
-    if already_skullstripped == 2:
-        already_skullstripped = 0
-    elif already_skullstripped == 3:
-        already_skullstripped = 1
-
-    subject_info = {}
-    subject_info['subject_id'] = subject_id
-    subject_info['start_time'] = pipeline_start_time
 
     # Check system dependencies
     check_system_deps(check_ants='ANTS' in c.regOption,
@@ -262,6 +193,79 @@ def anat_workflow(sub_dict, c, run, pipeline_timing_info=None,
             else:
                 shutil.rmtree(f)
 
+    return c, subject_id, input_creds_path
+
+
+def anat_workflow(sessions, conf, input_creds_path):
+    # TODO ASH temporary code, remove
+    # TODO ASH maybe scheme validation/normalization
+    already_skullstripped = conf.already_skullstripped[0]
+    if already_skullstripped == 2:
+        already_skullstripped = 0
+    elif already_skullstripped == 3:
+        already_skullstripped = 1
+
+    subject_id = sessions[0]['subject_id']
+
+    anat_preproc_list = []
+    for ses in sessions:
+        unique_id = ses['unique_id']
+        anat_flow = create_anat_datasource('anat_gather_%d' % unique_id)
+        anat_flow.inputs.inputnode.subject = subject_id
+        anat_flow.inputs.inputnode.anat = ses['anat']
+        anat_flow.inputs.inputnode.creds_path = input_creds_path
+        anat_flow.inputs.inputnode.dl_dir = conf.workingDirectory
+        anat_preproc_list.append(anat_flow)
+
+    longitudinal_template([node.ouputs for node in anat_preproc_list])
+
+    return
+
+
+def anat_workflow_old(ses_list, conf, run, pipeline_timing_info=None,
+                  p_name=None, plugin='MultiProc', plugin_args=None):
+    """
+    Function to prepare and, optionally, run the C-PAC workflow
+
+    Parameters
+    ----------
+    sub_dict : dictionary
+        subject dictionary with anatomical and functional image paths
+    c : Configuration object
+        CPAC pipeline configuration dictionary object
+    run : boolean
+        flag to indicate whether to run the prepared workflow
+    pipeline_timing_info : list (optional); default=None
+        list of pipeline info for reporting timing information
+    p_name : string (optional); default=None
+        name of pipeline
+    plugin : string (optional); default='MultiProc'
+        nipype plugin to utilize when the workflow is ran
+    plugin_args : dictionary (optional); default=None
+        plugin-specific arguments for the workflow plugin
+
+    Returns
+    -------
+    workflow : nipype workflow
+        the prepared nipype workflow object containing the parameters
+        specified in the config
+    """
+    # TODO LONG_REG some modifications for the pipeline name for the logger
+    c, subject_id, input_creds_path = init_subject_wf(ses_list[0], conf)
+
+    # TODO LONG_REG
+    # subject_info = {'subject_id': subject_id,
+    #                 'start_time': c.pipeline_start_time
+    #                 }
+
+    # TODO ASH temporary code, remove
+    # TODO ASH maybe scheme validation/normalization
+    already_skullstripped = c.already_skullstripped[0]
+    if already_skullstripped == 2:
+        already_skullstripped = 0
+    elif already_skullstripped == 3:
+        already_skullstripped = 1
+
     """""""""""""""""""""""""""""""""""""""""""""""""""
      PREPROCESSING
     """""""""""""""""""""""""""""""""""""""""""""""""""
@@ -296,44 +300,6 @@ def anat_workflow(sub_dict, c, run, pipeline_timing_info=None,
             strat_initial.update_resource_pool({
                 'anatomical_brain_mask': (brain_flow, 'outputspec.anat')
             })
-
-    if 'lesion_mask' in sub_dict.keys():
-        lesion_datasource = create_anat_datasource(
-            'lesion_gather_%d' % num_strat)
-        lesion_datasource.inputs.inputnode.subject = subject_id
-        lesion_datasource.inputs.inputnode.anat = sub_dict['lesion_mask']
-        lesion_datasource.inputs.inputnode.creds_path = input_creds_path
-        lesion_datasource.inputs.inputnode.dl_dir = c.workingDirectory
-
-        strat_initial.update_resource_pool({
-            'lesion_mask': (lesion_datasource, 'outputspec.anat')
-        })
-
-    # if the image has already been registered with the longitudinal preproc
-    if 'reg_anat' in sub_dict.keys():
-        lesion_datasource = create_anat_datasource(
-            'reg_anat_gather_%d' % num_strat)
-        lesion_datasource.inputs.inputnode.subject = subject_id
-        lesion_datasource.inputs.inputnode.anat = sub_dict['reg_anat']
-        lesion_datasource.inputs.inputnode.creds_path = input_creds_path
-        lesion_datasource.inputs.inputnode.dl_dir = c.workingDirectory
-
-        strat_initial.update_resource_pool({
-            'reg_anat': (lesion_datasource, 'outputspec.anat')
-        })
-    # the longitudinal preproc will also output a local template specific to
-    # the subject
-    if 'local_template' in sub_dict.keys():
-        lesion_datasource = create_anat_datasource(
-            'local_template_gather_%d' % num_strat)
-        lesion_datasource.inputs.inputnode.subject = subject_id
-        lesion_datasource.inputs.inputnode.anat = sub_dict['local_template']
-        lesion_datasource.inputs.inputnode.creds_path = input_creds_path
-        lesion_datasource.inputs.inputnode.dl_dir = c.workingDirectory
-
-        strat_initial.update_resource_pool({
-            'local_template': (lesion_datasource, 'outputspec.anat')
-        })
 
     num_strat += 1
     strat_list.append(strat_initial)
