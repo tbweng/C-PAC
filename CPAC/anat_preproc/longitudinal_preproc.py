@@ -373,9 +373,6 @@ def longitudinal_template(img_list, output_folder,
 
     """
     if method == 'flirt':
-        # align the images together
-        node_list = register_img_list(img_list, ref_img, output_folder, dof=12,
-                      interp='trilinear', cost='corratio', thread_pool=2)
         template = template_creation_flirt(img_list, output_folder,
                                            init_reg, avg_method, dof,
                                            interp, cost,

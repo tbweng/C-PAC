@@ -15,7 +15,7 @@ from CPAC.utils.datasource import (
 )
 
 from CPAC.anat_preproc.anat_preproc import create_anat_preproc
-from CPAC.anat_preproc.longitudinal_preproc import longitudinal_template
+from CPAC.anat_preproc.longitudinal_preproc import template_creation_flirt
 
 from CPAC.utils import Strategy, find_files
 
@@ -205,19 +205,45 @@ def anat_workflow(sessions, conf, input_creds_path):
     elif already_skullstripped == 3:
         already_skullstripped = 1
 
+    skullstrip_meth = {
+        'anatomical_brain_mask': 'mask',
+        'BET': 'fsl',
+        'AFNI': 'afni'
+    }
+
+
+
     subject_id = sessions[0]['subject_id']
 
     anat_preproc_list = []
     for ses in sessions:
-        unique_id = ses['unique_id']
-        anat_flow = create_anat_datasource('anat_gather_%d' % unique_id)
-        anat_flow.inputs.inputnode.subject = subject_id
-        anat_flow.inputs.inputnode.anat = ses['anat']
-        anat_flow.inputs.inputnode.creds_path = input_creds_path
-        anat_flow.inputs.inputnode.dl_dir = conf.workingDirectory
-        anat_preproc_list.append(anat_flow)
 
-    longitudinal_template([node.ouputs for node in anat_preproc_list])
+        unique_id = ses['unique_id']
+        if 'brain_mask' in ses.keys():
+            if ses['brain_mask'] and ses[
+                'brain_mask'].lower() != 'none':
+                brain_flow = create_anat_datasource(
+                    'brain_gather_%d' % unique_id)
+                brain_flow.inputs.inputnode.subject = subject_id
+                brain_flow.inputs.inputnode.anat = ses['brain_mask']
+                brain_flow.inputs.inputnode.creds_path = input_creds_path
+                brain_flow.inputs.inputnode.dl_dir = conf.workingDirectory
+
+        if "AFNI" in conf.skullstrip_option:
+
+        if "BET" in conf.skullstrip_option:
+
+        wf = pe.Workflow(name='anat_preproc' + unique_id)
+        anat_datasource = create_anat_datasource('anat_gather_%d' % unique_id)
+        anat_datasource.inputs.inputnode.subject = subject_id
+        anat_datasource.inputs.inputnode.anat = ses['anat']
+        anat_datasource.inputs.inputnode.creds_path = input_creds_path
+        anat_datasource.inputs.inputnode.dl_dir = conf.workingDirectory
+
+        anat_prep = create_anat_preproc(skullstrip_meth[])
+        anat_preproc_list.append(wf)
+
+    template_creation_flirt([node.ouputs for node in anat_preproc_list])
 
     return
 
