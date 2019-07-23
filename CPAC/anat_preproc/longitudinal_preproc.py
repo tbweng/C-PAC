@@ -334,11 +334,11 @@ def template_creation_flirt(img_list, output_folder,
 
 
 def longitudinal_template(img_list, output_folder,
-                            init_reg=None, avg_method='median', dof=12,
-                            interp='trilinear', cost='corratio',
-                            mat_type='matrix',
-                            convergence_threshold=np.finfo(np.float64).eps,
-                            thread_pool=2, method='flirt'):
+                          init_reg=None, avg_method='median', dof=12,
+                          interp='trilinear', cost='corratio',
+                          mat_type='matrix',
+                          convergence_threshold=np.finfo(np.float64).eps,
+                          thread_pool=2, method='flirt'):
     """
 
     Parameters

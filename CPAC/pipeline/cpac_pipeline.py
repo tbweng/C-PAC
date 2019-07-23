@@ -118,6 +118,7 @@ from CPAC.utils.utils import (
 logger = logging.getLogger('nipype.workflow')
 # config.enable_debug_mode()
 
+
 # TODO ASH move to somewhere else
 def pick_wm(seg_prob_list):
     seg_prob_list.sort()
@@ -408,6 +409,15 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
             'local_template': (lesion_datasource, 'outputspec.anat')
         })
 
+    template_center_of_mass = pe.Node(interface=afni.CenterMass(),
+                                      name='template_cmass')
+    template_center_of_mass.inputs.cm_file = os.path.join(
+        os.getcwd(), "template_center_of_mass.txt")
+    workflow.connect(
+        c.template_skull_for_anat, 'local_path',
+        template_center_of_mass, 'in_file')
+
+
     num_strat += 1
     strat_list.append(strat_initial)
 
@@ -422,6 +432,9 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
             anat_preproc = create_anat_preproc(method='mask',
                                                already_skullstripped=already_skullstripped,
                                                wf_name='anat_preproc_mask_%d' % num_strat)
+
+            workflow.connect(template_center_of_mass, 'cm',
+                             anat_preproc, 'template_cmass')
 
             node, out_file = strat['anatomical_brain']
             workflow.connect(node, out_file, anat_preproc,
@@ -464,6 +477,9 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
                                                already_skullstripped=already_skullstripped,
                                                wf_name='anat_preproc_afni_%d' % num_strat)
 
+            workflow.connect(template_center_of_mass, 'cm',
+                             anat_preproc, 'inputspec.template_cmass')
+
             anat_preproc.inputs.AFNI_options.set(
                 shrink_factor=c.skullstrip_shrink_factor,
                 var_shrink_fac=c.skullstrip_var_shrink_fac,
@@ -503,6 +519,8 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
 
             create_log_node(workflow, anat_preproc,
                             'outputspec.brain', num_strat)
+    workflow.run()
+    return 'DEBUUUUUUUUG'
 
     strat_list += new_strat_list
 
@@ -520,6 +538,9 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
             anat_preproc = create_anat_preproc(method='fsl',
                                                already_skullstripped=already_skullstripped,
                                                wf_name='anat_preproc_bet_%d' % num_strat)
+
+            workflow.connect(template_center_of_mass, 'cm',
+                             anat_preproc, 'template_cmass')
 
             anat_preproc.inputs.BET_options.set(
                 frac=c.bet_frac,
