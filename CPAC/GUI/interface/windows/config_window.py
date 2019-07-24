@@ -17,7 +17,7 @@ from CPAC.GUI.interface.pages import (
     FilteringSettings,
     TimeSeries, EPI_DistCorr, ROITimeseries,
     GroupAnalysis, GeneralGA, GPASettings, MDMRSettings, ISCSettings, RandomiseSettings,
-    TimeSeriesOptions, BASCSettings,
+    TimeSeriesOptions, BASCSettings,QPPSettings,
     AROMA_ICA, AromaSettings
 )
 
@@ -153,8 +153,6 @@ class Mybook(wx.Treebook):
             self.AddSubPage(page17, "Nuisance Regression", wx.ID_ANY)
             self.AddSubPage(page18, "Median Angle Correction", wx.ID_ANY)
 
-            self.AddSubPage(page19, "Temporal Filtering Options", wx.ID_ANY)
-
             self.AddPage(page20, "Time Series Extraction (TSE)", wx.ID_ANY)
             self.AddSubPage(page22, "Region-of-Interest TSE Options",
                             wx.ID_ANY)
@@ -187,6 +185,7 @@ class Mybook(wx.Treebook):
             page49 = BASCSettings(self)
             page50 = MDMRSettings(self)
             page51 = ISCSettings(self)
+            page52 = QPPSettings(self)
 
             self.AddPage(page45, "Group Analysis Settings", wx.ID_ANY)
             self.AddSubPage(page46, "General Settings", wx.ID_ANY)
@@ -195,7 +194,7 @@ class Mybook(wx.Treebook):
             self.AddSubPage(page49, "PyBASC Settings", wx.ID_ANY)
             self.AddSubPage(page50, "MDMR Settings", wx.ID_ANY)
             self.AddSubPage(page51, "ISC Settings", wx.ID_ANY)
-
+            self.AddSubPage(page52, "QPP Settings", wx.ID_ANY)
         self.Bind(wx.EVT_TREEBOOK_PAGE_CHANGED, self.OnPageChanged)
         self.Bind(wx.EVT_TREEBOOK_PAGE_CHANGING, self.OnPageChanging)
 
@@ -1137,20 +1136,8 @@ class MainFrame(wx.Frame):
                 # this runs if you hit 'Save' from within the pipeline config
                 # editor AND the editor was opened from the main window by
                 # clicking 'New' instead of 'Edit'
-
-                ### this is the old code for generating random city names
-                ### to name pipeline configs. remove at some point?
-                #for counter in wf_counter:
-                #    if counter != 0:
-                #        hash_val += 2 ** counter
-                #print "wf_counter -- ", wf_counter
-                #print "hashval --> ", hash_val
-                #pipeline_id = linecache.getline(p.resource_filename('CPAC', \
-                #       'GUI/resources/pipeline_names.py'), hash_val)
-
                 if os.path.exists(self.path):
                     self.update_listbox(pipeline_name)
-
             else:
 
                 # this runs if you hit 'Save' from within the pipeline config

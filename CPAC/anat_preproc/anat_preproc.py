@@ -130,7 +130,21 @@ def create_anat_preproc(method='afni', already_skullstripped=False,
     # Just add the alignment to the output image
     preproc.connect(anat_align_cmass, 'out_file', outputnode, 'reorient')
 
-    if not already_skullstripped:
+    if already_skullstripped:
+
+        anat_skullstrip = pe.Node(interface=util.IdentityInterface(fields=['out_file']),
+                                    name='anat_skullstrip')
+
+        preproc.connect(anat_reorient, 'out_file',
+                        anat_skullstrip, 'out_file')
+
+        preproc.connect(anat_skullstrip, 'out_file',
+                        outputnode, 'skullstrip')
+
+        preproc.connect(anat_skullstrip, 'out_file',
+                        outputnode, 'brain')
+
+    else:
 
         if method == 'afni':
             # Skull-stripping using AFNI 3dSkullStrip
