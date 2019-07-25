@@ -50,6 +50,13 @@ from CPAC.warp.pipeline import (
     calc_avg
 )
 
+from CPAC.warp.pipeline import ants_apply_warps_asl_mni
+
+from CPAC.registration import (
+    create_bbregister_asl_to_anat,
+    create_register_asl_to_anat
+)
+
 from CPAC.registration import (
     create_fsl_flirt_linear_reg,
     create_fsl_fnirt_nonlinear_reg,
@@ -1045,10 +1052,10 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
 
             # TODO ASH based on config, instead of nodes?
             if 'anat_mni_fnirt_register' in nodes or 'anat_mni_flirt_register' in nodes:
-                seg_preproc = create_seg_preproc(use_ants=False,
+                seg_preproc = create_seg_preproc(c, use_ants=False,
                                                  wf_name='seg_preproc_%d' % num_strat)
             elif 'anat_mni_ants_register' in nodes:
-                seg_preproc = create_seg_preproc(use_ants=True,
+                seg_preproc = create_seg_preproc(c, use_ants=True,
                                                  wf_name='seg_preproc_%d' % num_strat)
 
             # TODO ASH review
@@ -1104,12 +1111,13 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
                 'seg_probability_maps': (seg_preproc, 'outputspec.probability_maps'),
                 'seg_mixeltype': (seg_preproc, 'outputspec.mixeltype'),
                 'seg_partial_volume_map': (seg_preproc, 'outputspec.partial_volume_map'),
-                'seg_partial_volume_files': (seg_preproc, 'outputspec.partial_volume_files')
+                'seg_partial_volume_files': (seg_preproc, 'outputspec.partial_volume_files'),
             })
 
             create_log_node(workflow,
                             seg_preproc, 'outputspec.partial_volume_map',
                             num_strat)
+            # print(str(strat.get_resource_pool()))
 
     strat_list += new_strat_list
 
@@ -1139,8 +1147,9 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
 
                     # Start ASL workflow builder
                     from CPAC.asl_preproc.asl_preproc import create_asl_preproc
+                    print("Begin ASL workflow builder...")
 
-                    asl_preproc = create_asl_preproc(asl_paths_dict, subject_id, c, strat, num_strat, num_ants_cores,
+                    asl_preproc = create_asl_preproc(c, strat,
                                                      wf_name='asl_preproc_%d' % num_strat)
 
                     # datasource for asl
@@ -1156,6 +1165,131 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
 
                     workflow.connect(asl_wf, 'outputspec.rest', asl_preproc,
                                      'inputspec.asl_file')
+                    print(str(strat.get_resource_pool()))
+
+                    # get the reorient skull-on anatomical from resource
+                    # pool
+                    node, out_file = strat['anatomical_reorient']
+
+                    # pass the anatomical to the workflow
+                    workflow.connect(node, out_file,
+                                     asl_preproc,
+                                     'inputspec.anatomical_skull')
+
+                    # get the skullstripped anatomical from resource pool
+                    node, out_file = strat['anatomical_brain']
+
+                    # pass the anatomical to the workflow
+                    workflow.connect(node, out_file,
+                                     asl_preproc,
+                                     'inputspec.anatomical_brain')
+
+                    # Input segmentation pve for white matter
+                    # segmentation
+                    node, out_file = strat['seg_partial_volume_files']
+
+                    workflow.connect(node, (out_file, pick_wm),
+                                     asl_preproc,
+                                     'inputspec.seg_wm_pve')
+
+
+                    # 7/8/19 try: move reg to cpac_pipepline.py
+                    # 7/10/19: use the asl2anat.mat from oxford_asl
+
+                    """
+                    # Func -> T1 Registration (Initial Linear reg)
+                    dist_corr = False
+
+                    asl_to_anat = create_register_asl_to_anat(dist_corr,
+                                                              'asl_to_anat_FLIRT'
+                                                              '_%d' % num_strat)
+
+                    # Input registration parameters
+                    asl_to_anat.inputs.inputspec.interp = 'trilinear'
+
+                    # Input functional image (mean functional)
+                    workflow.connect(asl_preproc, 'outputspec.meanasl',
+                                     asl_to_anat, 'inputspec.asl')
+
+                    # Input skull-stripped anatomical (anat.nii.gz)
+                    node, out_file = strat['anatomical_brain']
+                    workflow.connect(node, out_file,
+                                     asl_to_anat, 'inputspec.anat')
+
+                    strat.update_resource_pool({
+                        'mean_asl_in_anat': (asl_to_anat, 'outputspec.anat_asl_nobbreg'),
+                        'asl_to_anat_linear_xfm': (asl_to_anat, 'outputspec.asl_to_anat_linear_xfm_nobbreg')
+                    })
+
+                    # Func -> T1 Registration (BBREG)
+
+                    asl_to_anat_bbreg = create_bbregister_asl_to_anat(
+                        dist_corr,
+                        'asl_to_anat_bbreg_%d' % num_strat
+                    )
+
+                    # Input registration parameters
+                    # TODO: $FSLDIR
+                    asl_to_anat_bbreg.inputs.inputspec.bbr_schedule = \
+                        '/usr/share/fsl/6.0/etc/flirtsch/bbr.sch'
+
+                    # Input mean asl image
+                    workflow.connect(asl_preproc, 'outputspec.meanasl',
+                                         asl_to_anat_bbreg, 'inputspec.asl')
+
+                    # Input anatomical whole-head image (reoriented)
+                    node, out_file = strat['anatomical_reorient']
+                    workflow.connect(node, out_file,
+                                     asl_to_anat_bbreg,
+                                     'inputspec.anat_skull')
+
+                    # Input initial linear reg
+                    workflow.connect(asl_to_anat, 'outputspec.asl_to_anat_linear_xfm_nobbreg',
+                                     asl_to_anat_bbreg,
+                                     'inputspec.linear_reg_matrix')
+
+                    # Input segmentation probability maps for white matter
+                    # segmentation
+                    node, out_file = strat['seg_probability_maps']
+                    workflow.connect(node, (out_file, pick_wm),
+                                     asl_to_anat_bbreg,
+                                     'inputspec.anat_wm_segmentation')
+
+                    strat.update_resource_pool({
+                        'mean_asl_in_anat': (asl_to_anat_bbreg, 'outputspec.anat_asl'),
+                        'asl_to_anat_linear_xfm': (asl_to_anat_bbreg, 'outputspec.asl_to_anat_linear_xfm')
+                    }, override=True)
+                    """
+
+                    # T1 -> MNI (done in main pipeline)
+
+                    ##################
+                    ### asl -> MNI ###
+                    ##################
+
+                    warp_diffdata_wf = ants_apply_warps_asl_mni(
+                        workflow, strat, num_strat, num_ants_cores,
+                        asl_preproc, 'outputspec.diffdata',
+                        asl_preproc, 'outputspec.meanasl',
+                        c.template_brain_only_for_func,
+                        "diffdata_to_standard",
+                        "Linear", 3
+                    )
+
+                    create_log_node(workflow, warp_diffdata_wf,
+                                    'outputspec.output_image', num_strat)
+
+                    warp_perfusion_wf = ants_apply_warps_asl_mni(
+                        workflow, strat, num_strat, num_ants_cores,
+                        asl_preproc, 'outputspec.perfusion_image',
+                        asl_preproc, 'outputspec.meanasl',
+                        c.template_brain_only_for_func,
+                        "perfusion_image_to_standard",
+                        "Linear", 3
+                    )
+
+                    create_log_node(workflow, warp_perfusion_wf,
+                                    'outputspec.output_image', num_strat)
 
             # Start BOLD workflow builder
 
@@ -1426,7 +1560,6 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
 
                 func_preproc = create_func_preproc(use_bet=False,
                                                 wf_name='func_preproc_automask_%d' % num_strat)
-
                 node, out_file = strat.get_leaf_properties()
                 workflow.connect(node, out_file, func_preproc,
                                 'inputspec.func')
@@ -1451,7 +1584,7 @@ def prep_workflow(sub_dict, c, run, pipeline_timing_info=None,
                     'motion_correct': (func_preproc, 'outputspec.motion_correct'),
                     'coordinate_transformation': (func_preproc, 'outputspec.oned_matrix_save')
                 })
-
+                print('mean_functional: ', strat['mean_functional'])
                 create_log_node(workflow, func_preproc,
                                 'outputspec.preprocessed', num_strat)
 

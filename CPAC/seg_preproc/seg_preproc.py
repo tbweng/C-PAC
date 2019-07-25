@@ -15,7 +15,7 @@ from CPAC.seg_preproc.utils import *
 import nipype.pipeline.engine as pe
 
 
-def create_seg_preproc(use_ants, wf_name ='seg_preproc'):
+def create_seg_preproc(c, use_ants, wf_name ='seg_preproc'):
 
 
     """
@@ -195,6 +195,8 @@ def create_seg_preproc(use_ants, wf_name ='seg_preproc'):
     """
 
     preproc = pe.Workflow(name = wf_name)
+    preproc.base_dir = c.workingDirectory
+
     inputNode = pe.Node(util.IdentityInterface(fields=['brain',
                                                        'standard2highres_init',
                                                        'standard2highres_mat',
@@ -213,6 +215,7 @@ def create_seg_preproc(use_ants, wf_name ='seg_preproc'):
                                                         'mixeltype',
                                                         'partial_volume_map',
                                                         'partial_volume_files',
+                                                        'bias_field',
                                                         'wm_mask']),
                         name='outputspec')
 
@@ -220,7 +223,10 @@ def create_seg_preproc(use_ants, wf_name ='seg_preproc'):
     segment.inputs.img_type = 1
     segment.inputs.segments = True
     segment.inputs.probability_maps = True
-    segment.inputs.out_basename = 'fast_'
+    segment.inputs.out_basename = 'segment'
+    segment.inputs.output_biasfield = True
+    segment.inputs.output_biascorrected = True
+    print("segment output dir is: ", segment.output_dir(), '/segment')
 
     check_wm = pe.Node(name='check_wm', interface=Function(function=check_if_file_is_empty, input_names=['in_file'], output_names=['out_file']))
     check_gm = pe.Node(name='check_gm', interface=Function(function=check_if_file_is_empty, input_names=['in_file'], output_names=['out_file']))
@@ -238,6 +244,8 @@ def create_seg_preproc(use_ants, wf_name ='seg_preproc'):
                     outputNode, 'partial_volume_files')
     preproc.connect(segment, 'partial_volume_map',
                     outputNode, 'partial_volume_map')
+    preproc.connect(segment, 'bias_field',
+                    outputNode, 'bias_field')
 
 
     ##get binarize thresholded csf mask
