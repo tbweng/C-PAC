@@ -12,6 +12,21 @@ import nipype.interfaces.utility as util
 import nipype.interfaces.fsl as fsl
 
 
+def read_ants_mat(ants_mat_file):
+    if not os.path.exists(ants_mat_file):
+        raise ValueError(str(ants_mat_file) + " does not exist.")
+
+    with open(ants_mat_file) as f:
+        for line in f:
+            tmp = line.split(':')
+            if tmp[0] == 'Parameters':
+                oth_transform = np.reshape(
+                    np.fromstring(tmp[1], float, sep=' '), (-1, 3))
+            if tmp[0] == 'FixedParameters':
+                translation = np.fromstring(tmp[1], float, sep=' ')
+    return translation, oth_transform
+
+
 def read_mat(input_mat):
     if isinstance(input_mat, np.ndarray):
         mat = input_mat
@@ -40,6 +55,7 @@ def norm_transformations(translation, oth_transform):
     tr_norm = np.linalg.norm(translation)
     affine_norm = np.linalg.norm(oth_transform - np.identity(3), 'fro')
     return pow(tr_norm, 2) + pow(affine_norm, 2)
+
 
 def norm_transformation(input_mat):
     """
@@ -223,16 +239,6 @@ def register_img_list(img_list, ref_img, output_folder, dof=12,
     return node_list
 
 
-def image_preproc(image, skull_strip_method='afni',
-                  already_skullstripped=False, wf_name='anat_preproc'):
-    from CPAC.anat_preproc import create_anat_preproc
-    wf = create_anat_preproc(method=skull_strip_method,
-                             already_skullstripped=already_skullstripped,
-                             wf_name=wf_name)
-
-    return wf
-
-
 def template_creation_flirt(img_list, output_folder,
                             init_reg=None, avg_method='median', dof=12,
                             interp='trilinear', cost='corratio',
@@ -240,14 +246,13 @@ def template_creation_flirt(img_list, output_folder,
                             convergence_threshold=np.finfo(np.float64).eps,
                             thread_pool=2):
     """
-
     Parameters
     ----------
     img_list: list of str
         list of images paths
     output_folder: str
         path to the output folder (the folder must already exist)
-    init_reg: list of Node or str
+    init_reg: list of Node
         (default None so no initial registration is performed)
         the output of the function register_img_list with another reference
         Reuter et al. 2012 (NeuroImage) section "Improved template estimation"
@@ -297,9 +302,8 @@ def template_creation_flirt(img_list, output_folder,
             convergence_list = [template_convergence(
                 mat, mat_type, convergence_threshold) for mat in mat_list]
             converged = all(convergence_list)
-        if isinstance(init_reg, six.string_types):
-            if init_reg == 'center':
-                print('todo')
+        else:
+            raise
     else:
         image_list = img_list
         converged = False
@@ -333,12 +337,12 @@ def template_creation_flirt(img_list, output_folder,
     return template
 
 
-def longitudinal_template(img_list, output_folder,
-                          init_reg=None, avg_method='median', dof=12,
-                          interp='trilinear', cost='corratio',
-                          mat_type='matrix',
-                          convergence_threshold=np.finfo(np.float64).eps,
-                          thread_pool=2, method='flirt'):
+def subject_specific_template(img_list, output_folder,
+                              init_reg=None, avg_method='median', dof=12,
+                              interp='trilinear', cost='corratio',
+                              mat_type='matrix',
+                              convergence_threshold=np.finfo(np.float64).eps,
+                              thread_pool=2, method='flirt'):
     """
 
     Parameters
@@ -373,14 +377,19 @@ def longitudinal_template(img_list, output_folder,
 
     """
     if method == 'flirt':
-        template = template_creation_flirt(img_list, output_folder,
-                                           init_reg, avg_method, dof,
-                                           interp, cost,
-                                           mat_type,
-                                           convergence_threshold,
-                                           thread_pool)
+        template_gen_node = pe.Node(util.Function(input_names=[
+            'img_list', 'output_folder',
+            'init_reg', 'avg_method', 'dof',
+            'interp', 'cost',
+            'mat_type',
+            'convergence_threshold',
+            'thread_pool'],
+            output_names=['template'],
+            function=template_creation_flirt),
+            name='subject_specific_template')
     else:
         raise ValueError(str(method)
                          + 'this method has not yet been implemented')
 
-    return template
+    return template_gen_node
+
