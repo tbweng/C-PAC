@@ -468,7 +468,6 @@ def create_func_preproc(use_bet=False, meth='mean', wf_name='func_preproc'):
     else:
         raise ValueError("average method unknown")
 
-    func_mean_skullstrip.inputs.options = '-mean'
     func_mean_skullstrip.inputs.outputtype = 'NIFTI_GZ'
 
     preproc.connect(func_edge_detect, 'out_file',
